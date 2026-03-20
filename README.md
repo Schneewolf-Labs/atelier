@@ -1,4 +1,4 @@
-# Atelier
+# 🎨 Atelier 🔨
 
 A simple, multi-GPU diffusion model fine-tuning library. One training loop, pluggable adapters and loss functions.
 
