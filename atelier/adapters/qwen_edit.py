@@ -91,6 +91,15 @@ class QwenEditAdapter(ModelAdapter):
     def noise_scheduler(self):
         return self._scheduler
 
+    def encode_image_tensor(self, image_tensor, device=None):
+        """Encode image tensors [B, C, H, W] in [-1, 1] to latents via video VAE."""
+        device = device or self._device
+        # Video VAE expects [B, C, 1, H, W]
+        pixel_values = image_tensor.unsqueeze(2).to(device=device, dtype=self._dtype)
+        with torch.no_grad():
+            latents = self._vae.encode(pixel_values).latent_dist.sample()
+        return latents
+
     def encode_images(self, images, height=None, width=None, device=None):
         """Encode PIL images to latents via video VAE.
 

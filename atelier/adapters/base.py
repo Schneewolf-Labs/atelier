@@ -25,6 +25,13 @@ class ModelAdapter:
         """
         raise NotImplementedError
 
+    def encode_image_tensor(self, image_tensor, device=None):
+        """Encode a batch of image tensors [B, C, H, W] in [-1, 1] to latents.
+
+        Used by loss functions for on-the-fly encoding from pre-processed tensors.
+        """
+        raise NotImplementedError
+
     def encode_text(self, prompts, device=None, **kwargs):
         """Encode text prompts to embeddings.
 

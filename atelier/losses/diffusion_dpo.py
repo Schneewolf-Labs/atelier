@@ -1,24 +1,32 @@
+"""Diffusion DPO — Direct Preference Optimization for diffusion models.
+
+Translates Grimoire's DPOLoss to the diffusion setting:
+- LLM: log_prob(chosen) - log_prob(rejected) → preference signal
+- Diffusion: MSE(rejected) - MSE(chosen) → preference signal
+  (lower MSE = better denoising = model "prefers" this image)
+"""
+
 import numpy as np
 import torch
 import torch.nn.functional as F
 
 from ..data.generation import GenerationCollator
+from .utils import get_paired_denoising_losses
 
 
 class DiffusionDPOLoss:
     """DPO (Direct Preference Optimization) loss for diffusion models.
 
     Given (prompt, chosen_image, rejected_image) triples:
-    1. Encode both images to latent space
-    2. Add shared noise at a shared timestep
-    3. Predict noise with the model for both
-    4. Apply DPO objective: loss = -log_sigmoid(beta * (loss_rejected - loss_chosen))
-    5. Add SFT regularization on chosen examples
+    1. Add shared noise at a shared timestep to both latents
+    2. Predict target with the model for both
+    3. Apply DPO: loss = -log_sigmoid(beta * (loss_rejected - loss_chosen))
+    4. Add SFT regularization on chosen examples
 
     Total loss = dpo_loss + sft_weight * sft_loss
 
-    The model learns to predict noise more accurately for chosen images,
-    implicitly learning that chosen is a better match for the prompt.
+    Works with any adapter — uses adapter protocol for noise addition,
+    forward pass, and target computation.
     """
 
     def __init__(
@@ -42,57 +50,12 @@ class DiffusionDPOLoss:
         self.total_steps = 1
 
     def __call__(self, adapter, model, batch, training=True):
-        # Encode text and build batch for adapter.forward()
-        text_data = adapter.encode_text(batch=batch, device=model.device)
-        forward_batch = {**text_data}
-
-        # Encode images to latents
-        chosen_image = batch["chosen_image"].to(dtype=torch.float32, device=adapter._vae.device)
-        rejected_image = batch["rejected_image"].to(dtype=torch.float32, device=adapter._vae.device)
-
-        with torch.no_grad():
-            chosen_latents = adapter._vae.encode(chosen_image).latent_dist.sample()
-            rejected_latents = adapter._vae.encode(rejected_image).latent_dist.sample()
-
-            if torch.isnan(chosen_latents).any() or torch.isnan(rejected_latents).any():
-                return torch.tensor(0.0, device=model.device, requires_grad=True), {
-                    "dpo_loss": 0.0, "sft_loss": 0.0, "total_loss": 0.0,
-                }
-
-            chosen_latents = chosen_latents * adapter._vae.config.scaling_factor
-            rejected_latents = rejected_latents * adapter._vae.config.scaling_factor
-
-        # Sample shared noise and timesteps (biased to mid-range)
-        noise = torch.randn_like(chosen_latents)
-        bsz = chosen_latents.shape[0]
-        T = adapter.noise_scheduler.config.num_train_timesteps
-        lo, hi = self.timestep_bias_range
-        u = torch.rand(bsz, device=chosen_latents.device)
-        u = lo + (hi - lo) * u
-        timesteps = (u * T).long().clamp_(0, T - 1)
-
-        # Add same noise to both
-        noisy_chosen = adapter.noise_scheduler.add_noise(chosen_latents, noise, timesteps)
-        noisy_rejected = adapter.noise_scheduler.add_noise(rejected_latents, noise, timesteps)
-
-        # Predict noise for both
-        pred_chosen = adapter.forward(model, noisy_chosen, timesteps, forward_batch)
-        pred_rejected = adapter.forward(model, noisy_rejected, timesteps, forward_batch)
-
-        # Compute losses in float32
-        pred_chosen = pred_chosen.float()
-        pred_rejected = pred_rejected.float()
-        noise = noise.float()
-
-        # SFT regularization: mean MSE on chosen
-        sft_loss = F.mse_loss(pred_chosen, noise, reduction="mean")
-
-        # Per-sample losses for DPO
-        loss_chosen_per = F.mse_loss(pred_chosen, noise, reduction="none").mean(dim=[1, 2, 3])
-        loss_rejected_per = F.mse_loss(pred_rejected, noise, reduction="none").mean(dim=[1, 2, 3])
+        chosen_per, rejected_per, sft_loss, _ = get_paired_denoising_losses(
+            adapter, model, batch, timestep_bias=self.timestep_bias_range,
+        )
 
         # DPO log-ratio with clamping
-        pi_logratios = loss_rejected_per - loss_chosen_per
+        pi_logratios = rejected_per - chosen_per
         pi_logratios = torch.clamp(pi_logratios, min=-self.logit_clamp, max=self.logit_clamp)
 
         current_beta = self._get_beta()
@@ -104,6 +67,7 @@ class DiffusionDPOLoss:
             "dpo_loss": dpo_loss.item() if not torch.isnan(dpo_loss) else 0.0,
             "sft_loss": sft_loss.item() if not torch.isnan(sft_loss) else 0.0,
             "total_loss": total_loss.item() if not torch.isnan(total_loss) else 0.0,
+            "reward_accuracy": (rejected_per > chosen_per).float().mean().item(),
         }
 
         return total_loss, metrics

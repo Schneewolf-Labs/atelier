@@ -119,6 +119,15 @@ class SDXLAdapter(ModelAdapter):
     def tokenizer_2(self):
         return self._tokenizer_2
 
+    def encode_image_tensor(self, image_tensor, device=None):
+        """Encode image tensors [B, C, H, W] in [-1, 1] to latents."""
+        device = device or self._device
+        image_tensor = image_tensor.to(dtype=torch.float32, device=device)
+        with torch.no_grad():
+            latents = self._vae.encode(image_tensor).latent_dist.sample()
+            latents = latents * self._vae.config.scaling_factor
+        return latents
+
     def encode_images(self, images, device=None, **kwargs):
         """Encode PIL images to latents via VAE (float32 for stability)."""
         device = device or self._device
