@@ -98,3 +98,29 @@ class TestModelAdapterBase:
         adapter = ModelAdapter()
         # Should not raise - default implementation is a no-op
         adapter.free_encoders()
+
+
+class TestQwenImageAdapterImport:
+    """QwenImageAdapter cannot be instantiated without the Qwen-Image weights
+    (~20 GB download), so we limit testing to public-API import shape +
+    inheritance. Behavioral tests run through smoke-test scripts."""
+
+    def test_importable_via_package(self):
+        from atelier.adapters import QwenImageAdapter as Adapter
+
+        assert Adapter.__name__ == "QwenImageAdapter"
+
+    def test_inherits_model_adapter(self):
+        from atelier.adapters import ModelAdapter, QwenImageAdapter
+
+        assert issubclass(QwenImageAdapter, ModelAdapter)
+
+    def test_defines_required_overrides(self):
+        from atelier.adapters import QwenImageAdapter
+
+        for method in ("encode_images", "encode_text", "sample_timesteps",
+                       "add_noise", "compute_target", "forward",
+                       "save_lora", "save_model"):
+            assert method in QwenImageAdapter.__dict__, (
+                f"QwenImageAdapter must override {method}()"
+            )

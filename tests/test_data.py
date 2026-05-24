@@ -173,12 +173,13 @@ class TestEditingCollator:
 # ---- EditingDataset ----
 
 class TestEditingDataset:
-    def _make_hf_dataset(self, n=5):
+    def _make_hf_dataset(self, n=5, with_rejected=True):
         """Create a mock HF dataset-like object."""
 
         class FakeDataset:
-            def __init__(self, data):
+            def __init__(self, data, column_names):
                 self._data = data
+                self.column_names = column_names
 
             def __len__(self):
                 return len(self._data)
@@ -187,16 +188,19 @@ class TestEditingDataset:
                 return self._data[idx]
 
             def select(self, indices):
-                return FakeDataset([self._data[i] for i in indices])
+                return FakeDataset([self._data[i] for i in indices], self.column_names)
 
+        cols = ["prompt", "chosen"] + (["rejected"] if with_rejected else [])
         data = []
         for i in range(n):
-            data.append({
+            row = {
                 "prompt": f"edit instruction {i}",
                 "chosen": Image.new("RGB", (64, 64), color="green"),
-                "rejected": Image.new("RGB", (64, 64), color="red"),
-            })
-        return FakeDataset(data)
+            }
+            if with_rejected:
+                row["rejected"] = Image.new("RGB", (64, 64), color="red")
+            data.append(row)
+        return FakeDataset(data, cols)
 
     def test_length(self):
         ds = self._make_hf_dataset(5)
@@ -239,6 +243,35 @@ class TestEditingDataset:
         assert "target_latents" in item
         assert "control_latents" in item
         assert "prompt" not in item
+
+    def test_getitem_t2i_no_rejected_column(self):
+        """When the dataset has no rejected column, no control is emitted."""
+        ds = self._make_hf_dataset(3, with_rejected=False)
+        edit_ds = EditingDataset(ds)
+        item = edit_ds[0]
+        assert "prompt" in item
+        assert "target_image" in item
+        assert "control_image" not in item
+
+    def test_getitem_t2i_with_cached_target(self):
+        """T2I mode with pre-computed text + target embeddings, no control."""
+        ds = self._make_hf_dataset(2, with_rejected=False)
+        text_cache = {
+            f"sample_{i}": {"prompt_embeds": torch.randn(5, 64)}
+            for i in range(2)
+        }
+        target_cache = {f"sample_{i}": torch.randn(4, 8, 8) for i in range(2)}
+
+        edit_ds = EditingDataset(
+            ds,
+            cached_text_embeddings=text_cache,
+            cached_target_embeddings=target_cache,
+        )
+        item = edit_ds[0]
+        assert "prompt_embeds" in item
+        assert "target_latents" in item
+        assert "control_latents" not in item
+        assert "control_image" not in item
 
 
 # ---- Cache utilities ----
@@ -288,3 +321,32 @@ class TestCacheUtils:
         with tempfile.TemporaryDirectory() as tmpdir:
             result = _load_cache(tmpdir)
             assert result is None
+
+    def test_save_and_load_cache_t2i_no_control(self):
+        """T2I caches omit the control file; load with has_control=False works."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            text = {"sample_0": {"embeds": torch.randn(10, 64)}}
+            targets = {"sample_0": torch.randn(4, 8, 8)}
+
+            _save_cache(tmpdir, text, targets, control_embeddings={})
+
+            assert os.path.exists(os.path.join(tmpdir, "text_embeddings.pt"))
+            assert os.path.exists(os.path.join(tmpdir, "target_embeddings.pt"))
+            assert not os.path.exists(os.path.join(tmpdir, "control_embeddings.pt"))
+
+            loaded = _load_cache(tmpdir, has_control=False)
+            assert loaded is not None
+            loaded_text, loaded_targets, loaded_controls = loaded
+            assert "sample_0" in loaded_text
+            assert torch.equal(loaded_targets["sample_0"], targets["sample_0"])
+            assert loaded_controls == {}
+
+    def test_load_cache_t2i_default_has_control_false_still_works(self):
+        """Default has_control=True; a T2I cache should not load through it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            text = {"sample_0": {"embeds": torch.randn(10, 64)}}
+            targets = {"sample_0": torch.randn(4, 8, 8)}
+            _save_cache(tmpdir, text, targets, control_embeddings={})
+
+            # Default (has_control=True) expects the control file → returns None
+            assert _load_cache(tmpdir) is None

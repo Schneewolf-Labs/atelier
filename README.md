@@ -70,6 +70,47 @@ trainer.train()
 trainer.save_model("./my-lora")
 ```
 
+### Qwen-Image LoRA (text-to-image, flow matching)
+
+Same loss as Qwen-Image-Edit; the adapter differs because the text encoder
+is not vision-conditioned and the transformer sees only the noised target
+(no control image concat).
+
+```python
+from peft import LoraConfig
+from atelier import AtelierTrainer, TrainingConfig
+from atelier.adapters import QwenImageAdapter
+from atelier.losses import FlowMatchingLoss
+from atelier.data import EditingDataset, cache_embeddings
+
+adapter = QwenImageAdapter("Qwen/Qwen-Image")
+
+# Dataset only needs (prompt, chosen) — no "rejected" column.
+text_emb, target_emb, _ = cache_embeddings(
+    raw_dataset, adapter, cache_dir="./output/cache",
+)
+adapter.free_encoders()
+
+dataset = EditingDataset(
+    raw_dataset,
+    cached_text_embeddings=text_emb,
+    cached_target_embeddings=target_emb,
+)
+
+trainer = AtelierTrainer(
+    adapter=adapter,
+    config=TrainingConfig(output_dir="./output", num_epochs=8, batch_size=1),
+    loss_fn=FlowMatchingLoss(),
+    train_dataset=dataset,
+    peft_config=LoraConfig(
+        r=32, lora_alpha=64,
+        target_modules=["to_k", "to_q", "to_v", "to_out.0"],
+    ),
+)
+trainer.train()
+trainer.save_model("./my-qwen-image-lora")
+```
+
 ### SDXL DPO (preference optimization)
 
 Same trainer, different adapter and loss function.
@@ -205,7 +246,8 @@ atelier/
 ├── callbacks.py         # TrainerCallback base class
 ├── adapters/
 │   ├── base.py          # ModelAdapter protocol
-│   ├── qwen_edit.py     # Qwen-Image-Edit (DiT + flow matching)
+│   ├── qwen_edit.py     # Qwen-Image-Edit (DiT + flow matching, image-conditioned)
+│   ├── qwen_image.py    # Qwen-Image (DiT + flow matching, text-to-image)
 │   └── sdxl.py          # SDXL (UNet + DDPM)
 ├── losses/
 │   ├── flow_matching.py # Flow matching MSE

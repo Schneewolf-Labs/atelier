@@ -7,12 +7,16 @@ from torch.utils.data import Dataset
 
 
 class EditingDataset(Dataset):
-    """Dataset for image editing training with paired before/after images.
+    """Dataset for image editing training, optionally with a control image.
 
     Expects a HuggingFace dataset with columns:
-        - prompt: str (edit instruction)
+        - prompt: str (edit instruction or generation caption)
         - chosen: PIL.Image (target / improved image)
-        - rejected: PIL.Image (source / control image)
+        - rejected: PIL.Image (source / control image) — OPTIONAL
+
+    If the dataset has no ``rejected`` column and ``cached_control_embeddings``
+    is empty, the dataset operates in single-image (text-to-image)
+    generation mode and emits no control side.
 
     Supports pre-computed embeddings via cached_* dicts (keyed by "sample_{idx}").
     When embeddings are provided, raw images/prompts are not returned.
@@ -30,6 +34,7 @@ class EditingDataset(Dataset):
         self.cached_text = cached_text_embeddings or {}
         self.cached_targets = cached_target_embeddings or {}
         self.cached_controls = cached_control_embeddings or {}
+        self._has_rejected = "rejected" in getattr(dataset, "column_names", []) or False
 
         if max_samples:
             self.dataset = self.dataset.select(range(min(max_samples, len(self.dataset))))
@@ -62,10 +67,10 @@ class EditingDataset(Dataset):
         else:
             result["target_image"] = item["chosen"]
 
-        # Control image latents (rejected / source)
+        # Control image latents (rejected / source) — optional for T2I
         if key in self.cached_controls:
             result["control_latents"] = self.cached_controls[key]
-        else:
+        elif self._has_rejected:
             result["control_image"] = item["rejected"]
 
         return result

@@ -25,7 +25,8 @@ atelier/
 ├── callbacks.py         # TrainerCallback base class (same interface as Grimoire)
 ├── adapters/
 │   ├── base.py          # ModelAdapter protocol
-│   ├── qwen_edit.py     # Qwen-Image-Edit (DiT + video VAE + flow matching)
+│   ├── qwen_edit.py     # Qwen-Image-Edit (DiT + video VAE + flow matching, image-conditioned text encoder)
+│   ├── qwen_image.py    # Qwen-Image (DiT + video VAE + flow matching, text-to-image)
 │   ├── sdxl.py          # SDXL (UNet + dual CLIP + DDPM)
 │   └── flux.py          # FLUX.1-dev (DiT + T5/CLIP)
 ├── losses/
