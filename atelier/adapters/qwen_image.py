@@ -28,7 +28,31 @@ class QwenImageAdapter(ModelAdapter):
     path differs.
     """
 
-    def __init__(self, pretrained_path, device="cuda", dtype=None):
+    def __init__(self, pretrained_path, device="cuda", dtype=None,
+                 defer_transformer=True, load_encoders=True, load_transformer=True):
+        """Load the Qwen-Image components.
+
+        Args:
+            pretrained_path: HF repo id or local path.
+            device: Target device for the encoders + (eventually) the transformer.
+            dtype: Weight dtype; defaults to bfloat16.
+            defer_transformer: If True (default) and ``load_transformer`` is
+                True, the trainable transformer is loaded to CPU at init and
+                only moved to ``device`` when
+                :meth:`move_transformer_to_device` is called — typically after
+                :meth:`free_encoders` has reclaimed the text encoder + VAE.
+                The peak VRAM during init is then max(encoders, transformer)
+                instead of their sum.
+            load_encoders: If False, skip loading the text-encoder pipeline
+                and VAE entirely. Use this in a training process when
+                embeddings have been pre-computed in a SEPARATE process and
+                cached to disk — the OS reclaims encoder VRAM cleanly when
+                the encoding process exits, which is more reliable than
+                trying to ``del`` references in a single process.
+            load_transformer: If False, skip loading the transformer entirely.
+                Use this in a dedicated encoding process to avoid paying the
+                disk-read cost for ~38 GiB of weights that won't be used.
+        """
         from diffusers import (
             AutoencoderKLQwenImage,
             FlowMatchEulerDiscreteScheduler,
@@ -37,20 +61,26 @@ class QwenImageAdapter(ModelAdapter):
         )
 
         self._dtype = dtype or torch.bfloat16
+        self._device = device
+        self._pipeline = None
+        self._vae = None
+        self._model = None
+        self._transformer_on_device = False
 
-        # Text-encoding pipeline only — no transformer/VAE
-        self._pipeline = QwenImagePipeline.from_pretrained(
-            pretrained_path, transformer=None, vae=None, torch_dtype=self._dtype,
-        )
-        self._pipeline.to(device)
+        # ── Encoders (pipeline + VAE) ─────────────────────────────
+        if load_encoders:
+            self._pipeline = QwenImagePipeline.from_pretrained(
+                pretrained_path, transformer=None, vae=None, torch_dtype=self._dtype,
+            )
+            self._pipeline.to(device)
 
-        # VAE
-        self._vae = AutoencoderKLQwenImage.from_pretrained(pretrained_path, subfolder="vae")
-        self._vae.to(device, dtype=self._dtype)
-        self._vae.eval()
-        self._vae.requires_grad_(False)
+            self._vae = AutoencoderKLQwenImage.from_pretrained(pretrained_path, subfolder="vae")
+            self._vae.to(device, dtype=self._dtype)
+            self._vae.eval()
+            self._vae.requires_grad_(False)
 
-        # VAE config for latent normalization + scale factor
+        # VAE config is metadata only — needed for latent normalization
+        # in the loss function even when load_encoders=False.
         self._vae_config = AutoencoderKLQwenImage.load_config(pretrained_path, subfolder="vae")
         self._init_vae_normalization()
 
@@ -62,19 +92,37 @@ class QwenImageAdapter(ModelAdapter):
             logger.warning("Could not find temporal_downsample in VAE config, using default scale factor of 8")
             self._vae_scale_factor = 8
 
-        # Transformer (the trainable model)
-        self._model = QwenImageTransformer2DModel.from_pretrained(pretrained_path, subfolder="transformer")
-        self._model.to(device, dtype=self._dtype)
+        # ── Transformer ───────────────────────────────────────────
+        if load_transformer:
+            self._model = QwenImageTransformer2DModel.from_pretrained(pretrained_path, subfolder="transformer")
+            if defer_transformer and load_encoders:
+                # Only worth deferring when encoders share the GPU.
+                self._model.to("cpu", dtype=self._dtype)
+                logger.info("Transformer loaded to CPU; call move_transformer_to_device() after free_encoders()")
+            else:
+                self._model.to(device, dtype=self._dtype)
+                self._transformer_on_device = True
 
-        # Scheduler
+        # Scheduler (always cheap, CPU-only)
         self._scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(pretrained_path, subfolder="scheduler")
         self._scheduler_copy = copy.deepcopy(self._scheduler)
 
-        self._device = device
+        # Warm up VAE if loaded
+        if self._vae is not None:
+            dummy = torch.zeros(1, 3, 1, 64, 64).to(device=device, dtype=self._dtype)
+            self._vae.encode(dummy)
 
-        # Warm up VAE
-        dummy = torch.zeros(1, 3, 1, 64, 64).to(device=device, dtype=self._dtype)
-        self._vae.encode(dummy)
+    def move_transformer_to_device(self, device=None):
+        """Move the trainable transformer onto the GPU.
+
+        Call this after :meth:`free_encoders` when ``defer_transformer=True``
+        was used at init, so the freed text-encoder VRAM is available.
+        """
+        device = device or self._device
+        self._model.to(device, dtype=self._dtype)
+        self._device = device
+        self._transformer_on_device = True
+        logger.info("Transformer moved to %s", device)
 
     def _init_vae_normalization(self):
         cfg = self._vae_config
@@ -255,10 +303,30 @@ class QwenImageAdapter(ModelAdapter):
         logger.info("Model saved to %s", path)
 
     def free_encoders(self):
-        del self._vae
-        del self._pipeline
-        self._vae = None
+        """Drop VAE + text encoder from GPU and reclaim VRAM.
+
+        ``del self._pipeline`` alone doesn't release the underlying GPU
+        tensors — Qwen-VL has multiple sub-modules (language tower,
+        vision tower) and lingering refs through tokenizer / processor
+        wiring keep tensors alive. The reliable path is to explicitly
+        ``.to("cpu")`` the components first so the parameter buffers
+        physically migrate off-device, then drop refs.
+        """
+        if self._pipeline is not None:
+            try:
+                self._pipeline.to("cpu")
+            except Exception as e:
+                logger.warning("pipeline.to('cpu') failed: %s", e)
+        if self._vae is not None:
+            try:
+                self._vae.to("cpu")
+            except Exception as e:
+                logger.warning("vae.to('cpu') failed: %s", e)
         self._pipeline = None
+        self._vae = None
         gc.collect()
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
         logger.info("Freed VAE and text encoder from memory")
