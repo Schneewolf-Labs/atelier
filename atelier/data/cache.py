@@ -42,7 +42,15 @@ def cache_embeddings(dataset, adapter, cache_dir=None, target_area=1024 * 1024, 
             return cached
 
     num_samples = min(len(dataset), max_samples) if max_samples else len(dataset)
-    device = adapter.model.device if hasattr(adapter.model, "device") else "cpu"
+    # Prefer the adapter's declared device. Falling back to
+    # ``adapter.model.device`` breaks when the model wasn't loaded
+    # (e.g. encode-only subprocess with load_transformer=False).
+    if hasattr(adapter, "device"):
+        device = adapter.device
+    elif adapter.model is not None and hasattr(adapter.model, "device"):
+        device = adapter.model.device
+    else:
+        device = "cpu"
 
     text_embeddings = {}
     target_embeddings = {}
