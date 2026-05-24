@@ -18,6 +18,17 @@ class ModelAdapter:
         """The noise scheduler for this model."""
         raise NotImplementedError
 
+    @property
+    def device(self):
+        """The active device for encoders + model.
+
+        Override if the adapter doesn't store ``self._device``. Used by
+        cache_embeddings + other utilities that need a device to run on
+        but can't ask ``adapter.model.device`` (the model may not be
+        loaded yet when only encoders are present).
+        """
+        return getattr(self, "_device", "cpu")
+
     def encode_images(self, images, device=None):
         """Encode PIL images to latent space via VAE.
 

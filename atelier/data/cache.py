@@ -19,7 +19,10 @@ def cache_embeddings(dataset, adapter, cache_dir=None, target_area=1024 * 1024, 
     from cache on subsequent calls.
 
     Args:
-        dataset: HuggingFace dataset with (prompt, chosen, rejected) columns.
+        dataset: HuggingFace dataset. Required columns: prompt, chosen.
+            If a ``rejected`` column is present, control embeddings are
+            also computed (editing / DPO mode). If absent, the dataset
+            is treated as text-to-image (target only).
         adapter: A ModelAdapter with encode_text() and encode_images().
         cache_dir: Directory to save/load cached embeddings.
         target_area: Target pixel area for image resizing.
@@ -27,16 +30,27 @@ def cache_embeddings(dataset, adapter, cache_dir=None, target_area=1024 * 1024, 
 
     Returns:
         (text_embeddings, target_embeddings, control_embeddings) dicts
-        keyed by "sample_{idx}".
+        keyed by "sample_{idx}". ``control_embeddings`` is an empty dict
+        when the dataset has no ``rejected`` column.
     """
+    has_control = "rejected" in getattr(dataset, "column_names", [])
+
     # Try loading from cache
     if cache_dir:
-        cached = _load_cache(cache_dir)
+        cached = _load_cache(cache_dir, has_control=has_control)
         if cached is not None:
             return cached
 
     num_samples = min(len(dataset), max_samples) if max_samples else len(dataset)
-    device = adapter.model.device if hasattr(adapter.model, "device") else "cpu"
+    # Prefer the adapter's declared device. Falling back to
+    # ``adapter.model.device`` breaks when the model wasn't loaded
+    # (e.g. encode-only subprocess with load_transformer=False).
+    if hasattr(adapter, "device"):
+        device = adapter.device
+    elif adapter.model is not None and hasattr(adapter.model, "device"):
+        device = adapter.model.device
+    else:
+        device = "cpu"
 
     text_embeddings = {}
     target_embeddings = {}
@@ -48,20 +62,27 @@ def cache_embeddings(dataset, adapter, cache_dir=None, target_area=1024 * 1024, 
             key = f"sample_{idx}"
 
             # Prepare images
-            control_image = _to_pil(item["rejected"])
             target_image = _to_pil(item["chosen"])
-            width, height = calculate_dimensions(target_area, control_image.width / control_image.height)
+            control_image = _to_pil(item["rejected"]) if has_control else None
+            ref_image = control_image or target_image
+            width, height = calculate_dimensions(target_area, ref_image.width / ref_image.height)
 
-            # Encode text
+            # Encode text. Pass control_image as the reference image
+            # for adapters whose text encoder is vision-conditioned
+            # (e.g. Qwen-Image-Edit); pure-T2I adapters ignore it.
             prompt = item.get("prompt", "")
-            text_data = adapter.encode_text([prompt], images=[control_image], device=device)
+            encode_kwargs = {"device": device}
+            if has_control:
+                encode_kwargs["images"] = [control_image]
+            text_data = adapter.encode_text([prompt], **encode_kwargs)
             text_embeddings[key] = {k: v[0].cpu() if isinstance(v, torch.Tensor) else v for k, v in text_data.items()}
 
             # Encode images
-            control_latents = adapter.encode_images([control_image], height=height, width=width, device=device)
             target_latents = adapter.encode_images([target_image], height=height, width=width, device=device)
-            control_embeddings[key] = control_latents[0].cpu()
             target_embeddings[key] = target_latents[0].cpu()
+            if has_control:
+                control_latents = adapter.encode_images([control_image], height=height, width=width, device=device)
+                control_embeddings[key] = control_latents[0].cpu()
 
             if idx % 100 == 0:
                 torch.cuda.empty_cache()
@@ -73,17 +94,22 @@ def cache_embeddings(dataset, adapter, cache_dir=None, target_area=1024 * 1024, 
     return text_embeddings, target_embeddings, control_embeddings
 
 
-def _load_cache(cache_dir):
-    """Load cached embeddings from disk if all files exist."""
+def _load_cache(cache_dir, has_control=True):
+    """Load cached embeddings from disk if all required files exist."""
     text_path = os.path.join(cache_dir, "text_embeddings.pt")
     target_path = os.path.join(cache_dir, "target_embeddings.pt")
     control_path = os.path.join(cache_dir, "control_embeddings.pt")
 
-    if all(os.path.exists(p) for p in (text_path, target_path, control_path)):
+    required = [text_path, target_path] + ([control_path] if has_control else [])
+    if all(os.path.exists(p) for p in required):
         logger.info("Loading cached embeddings from %s", cache_dir)
         text = torch.load(text_path, weights_only=False)
         targets = torch.load(target_path, weights_only=False)
-        controls = torch.load(control_path, weights_only=False)
+        controls = (
+            torch.load(control_path, weights_only=False)
+            if has_control and os.path.exists(control_path)
+            else {}
+        )
         logger.info("Loaded %d cached embeddings", len(text))
         return text, targets, controls
 
@@ -91,11 +117,12 @@ def _load_cache(cache_dir):
 
 
 def _save_cache(cache_dir, text_embeddings, target_embeddings, control_embeddings):
-    """Save embeddings to disk."""
+    """Save embeddings to disk. Control file is only written when non-empty."""
     os.makedirs(cache_dir, exist_ok=True)
     torch.save(text_embeddings, os.path.join(cache_dir, "text_embeddings.pt"))
     torch.save(target_embeddings, os.path.join(cache_dir, "target_embeddings.pt"))
-    torch.save(control_embeddings, os.path.join(cache_dir, "control_embeddings.pt"))
+    if control_embeddings:
+        torch.save(control_embeddings, os.path.join(cache_dir, "control_embeddings.pt"))
     logger.info("Saved embeddings to %s", cache_dir)
 
 
