@@ -177,6 +177,29 @@ trainer = AtelierTrainer(
 - **[Callbacks](docs/callbacks.md)** — Hooking into the training loop
 - **[Multi-GPU and DeepSpeed](docs/deepspeed.md)** — Distributed training setup
 
+## YAML config + CLI
+
+For orchestrators (e.g. [Merlina](https://github.com/Schneewolf-Labs/Merlina)) or
+when you just don't want to write a Python wrapper per run, train from a YAML config:
+
+```bash
+pip install -e ".[yaml]"
+python -m atelier.train --config configs/qwen_image_lora_example.yaml
+
+# Override anything on the CLI (JSON-decoded values):
+python -m atelier.train --config configs/my.yaml \
+    --set training.num_epochs=2 \
+    --set training.output_dir=./output-quick \
+    --set 'peft.target_modules=["to_q","to_v"]'
+```
+
+The YAML schema mirrors the Python API one-for-one — `model.adapter` picks an
+adapter from `atelier.registry.ADAPTERS`, `loss.type` picks from `LOSSES`,
+`peft` becomes a `LoraConfig`, `training` becomes a `TrainingConfig`, and
+`dataset` accepts an HF hub name, a local JSONL, or a `load_from_disk` path.
+See `atelier/train.py` for the full schema and `configs/qwen_image_lora_example.yaml`
+for a worked example.
+
 ## Multi-GPU
 
 No code changes. Configure with `accelerate` and launch:

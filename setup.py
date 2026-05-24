@@ -19,6 +19,7 @@ setup(
     extras_require={
         "quantization": ["bitsandbytes>=0.41.0"],
         "logging": ["wandb>=0.15.0"],
-        "dev": ["pytest>=7.0", "ruff>=0.1.0"],
+        "yaml": ["PyYAML>=6.0"],
+        "dev": ["pytest>=7.0", "ruff>=0.1.0", "PyYAML>=6.0"],
     },
 )
