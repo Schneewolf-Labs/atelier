@@ -100,6 +100,52 @@ class TestModelAdapterBase:
         adapter.free_encoders()
 
 
+class TestStripPeftPrefix:
+    """Regression tests for the LoRA-save key fix.
+
+    Before this fix, ``QwenImageAdapter.save_lora`` wrote keys like
+    ``transformer.base_model.model.transformer_blocks.0.attn.to_k.lora.down.weight``
+    that ``pipe.load_lora_weights`` couldn't match against the
+    transformer's actual module tree. The strip_peft_prefix helper +
+    dropping convert_state_dict_to_diffusers from the save path produces
+    the format diffusers + PEFT actually load.
+    """
+
+    def test_strip_simple(self):
+        from atelier.adapters.qwen_image import strip_peft_prefix
+        out = strip_peft_prefix({
+            "base_model.model.foo.lora_A.weight": 1,
+            "base_model.model.bar.lora_B.weight": 2,
+        })
+        assert out == {"foo.lora_A.weight": 1, "bar.lora_B.weight": 2}
+
+    def test_strip_no_prefix_passthrough(self):
+        from atelier.adapters.qwen_image import strip_peft_prefix
+        sd = {"foo.weight": 1, "bar.weight": 2}
+        assert strip_peft_prefix(sd) == sd
+
+    def test_strip_preserves_real_module_paths(self):
+        """Ensure the prefix only strips the wrapper, not legitimate
+        module path components that contain similar substrings."""
+        from atelier.adapters.qwen_image import strip_peft_prefix
+        out = strip_peft_prefix({
+            "base_model.model.transformer_blocks.0.attn.to_k.lora_A.weight": 1,
+            "base_model.model.transformer_blocks.41.attn.to_out.0.lora_B.weight": 2,
+        })
+        assert "transformer_blocks.0.attn.to_k.lora_A.weight" in out
+        assert "transformer_blocks.41.attn.to_out.0.lora_B.weight" in out
+        assert not any("base_model" in k for k in out)
+
+    def test_strip_does_not_touch_lora_A_B_suffixes(self):
+        """The fix is about the PREFIX. The lora_A / lora_B suffix must
+        survive untouched — that's the PEFT format diffusers wants."""
+        from atelier.adapters.qwen_image import strip_peft_prefix
+        out = strip_peft_prefix({"base_model.model.x.lora_A.weight": 1})
+        key = next(iter(out))
+        assert key.endswith(".lora_A.weight"), \
+            "lora_A suffix must remain — diffusers expects PEFT format, not legacy .lora.down.weight"
+
+
 class TestQwenImageAdapterImport:
     """QwenImageAdapter cannot be instantiated without the Qwen-Image weights
     (~20 GB download), so we limit testing to public-API import shape +

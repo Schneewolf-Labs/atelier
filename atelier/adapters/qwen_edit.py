@@ -263,15 +263,23 @@ class QwenEditAdapter(ModelAdapter):
         return output
 
     def save_lora(self, model, path):
-        """Save LoRA weights in diffusers format."""
+        """Save LoRA weights in the format diffusers + PEFT can load back.
+
+        Drops the legacy ``convert_state_dict_to_diffusers`` call (which
+        rewrites PEFT-format keys into the pre-PEFT diffusers layout that
+        modern ``pipe.load_lora_weights`` rejects) and explicitly strips
+        the ``base_model.model.`` PEFT wrapper prefix that
+        ``get_peft_model_state_dict`` retains in some versions. See the
+        QwenImageAdapter version for the full bug-tour comment.
+        """
         import os
 
         from diffusers import QwenImagePipeline
-        from diffusers.utils import convert_state_dict_to_diffusers
         from peft.utils import get_peft_model_state_dict
 
         os.makedirs(path, exist_ok=True)
-        state_dict = convert_state_dict_to_diffusers(get_peft_model_state_dict(model))
+        from .qwen_image import strip_peft_prefix
+        state_dict = strip_peft_prefix(get_peft_model_state_dict(model))
         QwenImagePipeline.save_lora_weights(path, state_dict, safe_serialization=True)
         logger.info("LoRA weights saved to %s", path)
 

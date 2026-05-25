@@ -11,6 +11,20 @@ from .base import ModelAdapter
 logger = logging.getLogger(__name__)
 
 
+def strip_peft_prefix(state_dict: dict) -> dict:
+    """Strip ``base_model.model.`` (PEFT wrapper prefix) from state-dict keys.
+
+    ``get_peft_model_state_dict`` retains the wrapper prefix in some PEFT
+    versions; ``pipe.load_lora_weights`` then can't match the keys against
+    the unwrapped transformer's module tree. Stripping here is the
+    minimal-change fix that works across PEFT versions.
+
+    Module-level so callers can use it without subclassing the adapter,
+    and so it's trivially unit-testable without any ML stack imports.
+    """
+    return {k.replace("base_model.model.", ""): v for k, v in state_dict.items()}
+
+
 class QwenImageAdapter(ModelAdapter):
     """Adapter for Qwen-Image (DiT + video VAE + flow matching), text-to-image.
 
@@ -284,14 +298,32 @@ class QwenImageAdapter(ModelAdapter):
         return output
 
     def save_lora(self, model, path):
+        """Save LoRA weights in the format diffusers + PEFT can load back.
+
+        Two issues this avoids:
+
+        1. ``convert_state_dict_to_diffusers`` is a LEGACY converter that
+           rewrites PEFT-format keys (`.lora_A.weight` / `.lora_B.weight`)
+           into the pre-PEFT diffusers layout (`.lora.down.weight` /
+           `.lora.up.weight`). Modern ``pipe.load_lora_weights`` expects
+           the PEFT format directly — passing the converted dict produces
+           a file that fails to load with "Target modules not found in
+           the base model."
+        2. ``get_peft_model_state_dict`` retains the ``base_model.model.``
+           wrapper prefix in some PEFT versions. ``save_lora_weights``
+           then prepends ``transformer.`` to that, producing
+           ``transformer.base_model.model.transformer_blocks.…`` keys
+           that don't line up with the transformer's own module tree.
+           Strip the wrapper explicitly so the saved keys are
+           ``transformer.transformer_blocks.…``.
+        """
         import os
 
         from diffusers import QwenImagePipeline
-        from diffusers.utils import convert_state_dict_to_diffusers
         from peft.utils import get_peft_model_state_dict
 
         os.makedirs(path, exist_ok=True)
-        state_dict = convert_state_dict_to_diffusers(get_peft_model_state_dict(model))
+        state_dict = strip_peft_prefix(get_peft_model_state_dict(model))
         QwenImagePipeline.save_lora_weights(path, state_dict, safe_serialization=True)
         logger.info("LoRA weights saved to %s", path)
 
