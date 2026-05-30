@@ -105,6 +105,10 @@ trainer = AtelierTrainer(
     peft_config=LoraConfig(
         r=32, lora_alpha=64,
         target_modules=["to_k", "to_q", "to_v", "to_out.0"],
+        # DoRA — magnitude + direction decomposition; meaningfully better
+        # quality on small aesthetic datasets vs vanilla LoRA, ~5-10%
+        # extra step time. Requires peft >= 0.10.
+        use_dora=True,
     ),
 )
 trainer.train()
