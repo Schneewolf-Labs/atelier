@@ -30,6 +30,12 @@ peft:
   target_modules: ["to_k", "to_q", "to_v", "to_out.0"]
   lora_dropout: 0.05
   init_lora_weights: "gaussian"
+  # DoRA (Weight-Decomposed Low-Rank Adaptation) — decomposes the LoRA
+  # update into a magnitude vector + a directional matrix. Modest extra
+  # compute (~5-10% slower step) for meaningfully higher quality on
+  # small/medium aesthetic datasets where vanilla LoRA can underfit
+  # the target style. Requires peft >= 0.10. Flip to true to try.
+  use_dora: false
 
 cache:
   enable: true

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-05-30
+
+### Added
+- **DoRA support documented + wired through the YAML config path**
+  (`peft.use_dora: true`). DoRA (Weight-Decomposed Low-Rank Adaptation,
+  Liu et al. 2024) decomposes the LoRA update into a magnitude vector
+  + a directional matrix, giving meaningfully better quality on small /
+  medium aesthetic datasets where vanilla LoRA underfits — at ~5-10%
+  extra step time. Requires `peft >= 0.10`.
+- DoRA was already supported as a `LoraConfig` kwarg (Atelier's YAML
+  builder passes through any PEFT-config field), but it wasn't
+  discoverable. This release just makes it a first-class option in
+  the example config + README quick-start.
+
 ## [0.1.0] - 2026-05-29
 
 ### Added
