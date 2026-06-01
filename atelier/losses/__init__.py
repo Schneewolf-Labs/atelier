@@ -5,4 +5,6 @@ from .diffusion_kto import DiffusionKTOLoss as DiffusionKTOLoss
 from .diffusion_orpo import DiffusionORPOLoss as DiffusionORPOLoss
 from .diffusion_simpo import DiffusionSimPOLoss as DiffusionSimPOLoss
 from .epsilon import EpsilonLoss as EpsilonLoss
+from .flow_grpo import FlowGRPOLoss as FlowGRPOLoss
+from .flow_grpo import FlowGRPOLossOutput as FlowGRPOLossOutput
 from .flow_matching import FlowMatchingLoss as FlowMatchingLoss

@@ -177,6 +177,7 @@ trainer = AtelierTrainer(
 ## Guides
 
 - **[Loss Formulas](docs/loss-formulas.md)** — Math for flow matching and diffusion DPO
+- **[Flow-GRPO](docs/flow-grpo.md)** — Online reward-driven RL fine-tuning (Flow-GRPO / DanceGRPO)
 - **[Adapters](docs/adapters.md)** — Writing a custom adapter for a new model architecture
 - **[Callbacks](docs/callbacks.md)** — Hooking into the training loop
 - **[Multi-GPU and DeepSpeed](docs/deepspeed.md)** — Distributed training setup

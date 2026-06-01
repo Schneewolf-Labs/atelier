@@ -48,3 +48,24 @@ class TrainingConfig:
 
     # Reproducibility
     seed: int = 42
+
+
+@dataclass
+class FlowGRPOConfig(TrainingConfig):
+    """Configuration for FlowGRPOTrainer (Flow-GRPO / DanceGRPO online RL).
+
+    Additive over TrainingConfig — Merlina forwards the shared fields and sets the
+    rollout/optimization knobs below. The loss-side knobs (beta, epsilon, loss_type,
+    scale_rewards) live on FlowGRPOLoss, not here.
+    """
+
+    # Rollout
+    num_generations: int = 8          # G — images sampled per prompt
+    num_inference_steps: int = 16     # denoising steps per sample (kept low — cost is brutal)
+    guidance_scale: float = 4.5
+    sde_noise_level: float = 0.7      # eta for SDE-ification; 0 == deterministic (no logprobs)
+    image_resolution: int = 512       # smaller than SFT default — rollout cost scales hard
+
+    # Optimization
+    num_iterations: int = 1           # PPO inner epochs (mu)
+    timestep_fraction: float = 1.0    # DDPO trick: backprop a random fraction of steps to fit memory

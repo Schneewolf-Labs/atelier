@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Flow-GRPO (online RL) API surface** (Flow-GRPO / DanceGRPO). Inverts the
+  offline SFT path: each step samples images with the current policy, scores
+  them through a single synchronous reward callable, and does policy gradient
+  over the SDE denoising trajectory. New surface:
+  - `FlowGRPOLoss` (`atelier.losses`) — pure per-step PPO loss + reference KL
+    (k3 estimator) + group-normalized advantages. Reference-free by default.
+  - `ImageRewardFn` (`atelier.rewards`) — the reward Protocol (the membrane).
+    Atelier defines the contract only; concrete rewards live in Merlina.
+  - `SupportsSDESampling` + `SDERollout` (`atelier.adapters`) — the SDE-sampler
+    contract each adapter implements to be GRPO-trainable.
+  - `PromptDataset` + `PromptCollator` (`atelier.data`) — prompt-only rollout
+    data with optional up-front text-embedding caching.
+  - `FlowGRPOConfig` (`atelier`) — additive over `TrainingConfig`.
+  - `FlowGRPOTrainer` (`atelier`) — the online loop; reference policy is the
+    LoRA adapter disabled (no second model copy). Same callbacks/checkpointing
+    surface as `AtelierTrainer`. See [docs/flow-grpo.md](docs/flow-grpo.md).
+
 ## [0.1.1] - 2026-05-30
 
 ### Added
