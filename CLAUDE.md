@@ -23,17 +23,23 @@ atelier/
 ├── config.py            # TrainingConfig dataclass
 ├── trainer.py           # AtelierTrainer — the training loop
 ├── callbacks.py         # TrainerCallback base class (same interface as Grimoire)
+├── registry.py          # String → adapter/loss class resolution (for YAML/CLI)
+├── train.py             # YAML config + CLI entry point (python -m atelier.train)
 ├── adapters/
 │   ├── base.py          # ModelAdapter protocol
 │   ├── qwen_edit.py     # Qwen-Image-Edit (DiT + video VAE + flow matching, image-conditioned text encoder)
 │   ├── qwen_image.py    # Qwen-Image (DiT + video VAE + flow matching, text-to-image)
-│   ├── sdxl.py          # SDXL (UNet + dual CLIP + DDPM)
-│   └── flux.py          # FLUX.1-dev (DiT + T5/CLIP)
+│   └── sdxl.py          # SDXL (UNet + dual CLIP + DDPM)
 ├── losses/
-│   ├── flow_matching.py # Flow matching MSE (Qwen, SD3, FLUX)
-│   ├── diffusion_dpo.py # DPO on noise prediction + SFT regularization
-│   ├── epsilon.py       # Epsilon prediction (DDPM)
-│   └── v_prediction.py  # V-prediction
+│   ├── flow_matching.py   # Flow matching MSE (Qwen video-VAE layout; 4-D models need a matching collator)
+│   ├── epsilon.py         # Epsilon prediction (DDPM)
+│   ├── diffusion_dpo.py   # DPO on denoising MSE + SFT regularization
+│   ├── diffusion_cpo.py   # CPO (reference-free contrastive preference)
+│   ├── diffusion_ipo.py   # IPO (squared-loss preference; needs reference)
+│   ├── diffusion_kto.py   # KTO (unpaired binary good/bad feedback)
+│   ├── diffusion_simpo.py # SimPO (reference-free, length-normalized margin)
+│   ├── diffusion_orpo.py  # ORPO (odds-ratio preference + SFT)
+│   └── utils.py           # Shared paired/single denoising-loss helpers
 └── data/
     ├── editing.py       # Paired image editing dataset + collator
     ├── generation.py    # Text-to-image dataset + collator
@@ -81,6 +87,8 @@ Atelier consolidates and generalizes two existing trainers in this project:
   - Becomes: `adapters/qwen_edit.py` + `losses/flow_matching.py` + `data/editing.py`
 - **diffusion-dpo-trainer** — DPO training for SDXL UNet
   - Becomes: `adapters/sdxl.py` + `losses/diffusion_dpo.py` + `data/generation.py`
+  - Generalized into a family of preference losses sharing `losses/utils.py`:
+    DPO, CPO, IPO, KTO, SimPO, ORPO
 
 ## Usage
 
@@ -120,8 +128,10 @@ trainer.save_model("./my-sdxl")
 pip install -e .                    # Install in dev mode
 pip install -e ".[quantization]"    # With bitsandbytes
 pip install -e ".[logging]"         # With wandb
+pip install -e ".[yaml]"            # With PyYAML (for the config CLI)
 accelerate config                   # Configure multi-GPU / DeepSpeed
 accelerate launch script.py         # Run distributed training
+python -m atelier.train config.yaml # Train from a YAML config (adapter/loss by name)
 pytest                              # Run tests
 ```
 

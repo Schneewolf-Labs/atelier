@@ -492,3 +492,10 @@ class TestLossUtils:
             adapter, adapter.model, batch,
         )
         assert chosen_per.shape == (2,)
+
+    def test_sigmas_for_timesteps_default_none(self):
+        # DDPM-style adapters (and the base protocol) return None, so the
+        # timestep-bias path in the preference losses is a no-op for them.
+        adapter = MockAdapter()
+        timesteps = torch.tensor([10, 250, 900])
+        assert adapter.sigmas_for_timesteps(timesteps, "cpu") is None

@@ -238,6 +238,10 @@ class QwenImageAdapter(ModelAdapter):
             sigma = sigma.unsqueeze(-1)
         return sigma
 
+    def sigmas_for_timesteps(self, timesteps, device):
+        """Look up flow-matching sigmas for explicit (e.g. bias-sampled) timesteps."""
+        return self._get_sigmas(timesteps, device=device, dtype=torch.float32)
+
     def add_noise(self, latents, noise, timesteps, sigmas):
         sigmas = sigmas.to(latents.device, latents.dtype)
         return (1.0 - sigmas) * latents + sigmas * noise

@@ -189,6 +189,10 @@ class QwenEditAdapter(ModelAdapter):
             sigma = sigma.unsqueeze(-1)
         return sigma
 
+    def sigmas_for_timesteps(self, timesteps, device):
+        """Look up flow-matching sigmas for explicit (e.g. bias-sampled) timesteps."""
+        return self._get_sigmas(timesteps, device=device, dtype=torch.float32)
+
     def add_noise(self, latents, noise, timesteps, sigmas):
         """Flow matching noise addition: (1 - sigma) * latents + sigma * noise."""
         sigmas = sigmas.to(latents.device, latents.dtype)
