@@ -56,7 +56,9 @@ def get_paired_denoising_losses(adapter, model, batch, timestep_bias=None):
         u = torch.rand(bsz, device=device)
         u = lo + (hi - lo) * u
         timesteps = (u * T).long().clamp_(0, T - 1)
-        sigmas = None
+        # Flow-matching adapters need sigmas for these explicit timesteps;
+        # DDPM adapters return None and ignore them downstream.
+        sigmas = adapter.sigmas_for_timesteps(timesteps, device)
     else:
         timesteps, sigmas = adapter.sample_timesteps(bsz, device)
 
@@ -121,7 +123,9 @@ def get_single_denoising_loss(adapter, model, batch, timestep_bias=None):
         u = torch.rand(bsz, device=device)
         u = lo + (hi - lo) * u
         timesteps = (u * T).long().clamp_(0, T - 1)
-        sigmas = None
+        # Flow-matching adapters need sigmas for these explicit timesteps;
+        # DDPM adapters return None and ignore them downstream.
+        sigmas = adapter.sigmas_for_timesteps(timesteps, device)
     else:
         timesteps, sigmas = adapter.sample_timesteps(bsz, device)
 

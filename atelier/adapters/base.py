@@ -57,6 +57,18 @@ class ModelAdapter:
         """
         raise NotImplementedError
 
+    def sigmas_for_timesteps(self, timesteps, device):
+        """Return sigmas for explicitly-chosen timesteps, or None.
+
+        Preference losses (DPO/IPO/...) can bias the timestep *range* instead
+        of drawing from :meth:`sample_timesteps`. DDPM-style adapters don't use
+        sigmas — their ``add_noise`` / ``compute_target`` ignore the argument —
+        so the default returns None. Flow-matching adapters override this to
+        look up the matching sigmas, so those losses stay correct on flow
+        models instead of crashing on ``(1 - None)``.
+        """
+        return None
+
     def add_noise(self, latents, noise, timesteps, sigmas):
         """Create noisy input from clean latents.
 

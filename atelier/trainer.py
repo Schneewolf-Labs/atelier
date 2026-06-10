@@ -44,6 +44,10 @@ class AtelierTrainer:
         self.current_epoch = 0
         self._stop_requested = False
 
+        # Seed before any parameter initialization (LoRA matrices in
+        # get_peft_model below init random weights) so runs are reproducible.
+        set_seed(config.seed)
+
         model = adapter.model
 
         # Apply PEFT / LoRA
@@ -81,8 +85,6 @@ class AtelierTrainer:
             log_with=config.log_with,
             project_dir=config.output_dir,
         )
-
-        set_seed(config.seed)
 
         # Data collator
         if data_collator is None:
@@ -203,6 +205,8 @@ class AtelierTrainer:
 
             running_loss = 0.0
             steps_in_epoch = 0
+            window_loss = 0.0
+            window_steps = 0
 
             for step, batch in enumerate(active_dataloader):
                 with self.accelerator.accumulate(self.model):
@@ -225,20 +229,26 @@ class AtelierTrainer:
                 if self.accelerator.sync_gradients:
                     self.global_step += 1
                     steps_in_epoch += 1
-                    running_loss += loss.detach().item()
+                    step_loss = loss.detach().item()
+                    running_loss += step_loss
+                    window_loss += step_loss
+                    window_steps += 1
 
                     avg_loss = running_loss / steps_in_epoch
                     lr = self.lr_scheduler.get_last_lr()[0]
                     progress_bar.update(1)
                     progress_bar.set_postfix(loss=f"{avg_loss:.4f}", lr=f"{lr:.2e}")
 
-                    self._fire("on_step_end", step=self.global_step, loss=loss.item(), metrics=metrics)
+                    self._fire("on_step_end", step=self.global_step, loss=step_loss, metrics=metrics)
 
-                    # Logging
+                    # Logging — mean loss over the logging window, not the
+                    # epoch-cumulative average (which permanently smooths
+                    # early-step spikes out of the curve).
                     if self.global_step % config.logging_steps == 0:
                         progress = self.global_step / self.max_steps
+                        window_avg = window_loss / max(window_steps, 1)
                         log_metrics = {
-                            "train/loss": avg_loss,
+                            "train/loss": window_avg,
                             "train/learning_rate": lr,
                             "train/epoch": epoch + (step + 1) / len(self.train_dataloader),
                             "train/global_step": self.global_step,
@@ -247,6 +257,8 @@ class AtelierTrainer:
                         }
                         self._log_metrics(log_metrics)
                         self._fire("on_log", metrics=log_metrics)
+                        window_loss = 0.0
+                        window_steps = 0
 
                     # Evaluation
                     if config.eval_steps and self.eval_dataloader and self.global_step % config.eval_steps == 0:
