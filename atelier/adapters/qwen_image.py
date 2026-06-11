@@ -229,9 +229,16 @@ class QwenImageAdapter(ModelAdapter):
         return timesteps, sigmas
 
     def _get_sigmas(self, timesteps, device, dtype=torch.float32, n_dim=5):
+        """Look up sigmas for given timesteps (nearest schedule entry).
+
+        Exact equality breaks for bias-sampled integer timesteps: the
+        schedule's float timesteps need not contain them (e.g. with a
+        shifted scheduler, or t=0 which no flow schedule includes).
+        """
         sigmas = self._scheduler_copy.sigmas.to(device=device, dtype=dtype)
-        schedule_timesteps = self._scheduler_copy.timesteps.to(device)
-        step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
+        schedule_timesteps = self._scheduler_copy.timesteps.to(device=device, dtype=dtype)
+        deltas = (schedule_timesteps.unsqueeze(0) - timesteps.to(device=device, dtype=dtype).unsqueeze(1)).abs()
+        step_indices = deltas.argmin(dim=1)
 
         sigma = sigmas[step_indices].flatten()
         while len(sigma.shape) < n_dim:

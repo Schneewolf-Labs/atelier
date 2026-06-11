@@ -170,3 +170,49 @@ class TestQwenImageAdapterImport:
             assert method in QwenImageAdapter.__dict__, (
                 f"QwenImageAdapter must override {method}()"
             )
+
+
+class TestGetSigmasNearestMatch:
+    """_get_sigmas must resolve bias-sampled integer timesteps that don't
+    appear exactly in the float schedule (shifted schedulers, t=0). The
+    method only touches self._scheduler_copy, so a stub stands in for the
+    adapter — no model weights needed."""
+
+    def _stub(self, shift_offset=0.0):
+        from types import SimpleNamespace
+
+        sigmas = torch.linspace(1.0, 0.001, 1000)
+        return SimpleNamespace(
+            _scheduler_copy=SimpleNamespace(
+                sigmas=sigmas,
+                timesteps=sigmas * 1000 + shift_offset,
+            )
+        )
+
+    def _adapters(self):
+        from atelier.adapters.qwen_edit import QwenEditAdapter
+        from atelier.adapters.qwen_image import QwenImageAdapter
+
+        return [QwenImageAdapter, QwenEditAdapter]
+
+    def test_exact_schedule_timesteps(self):
+        for cls in self._adapters():
+            stub = self._stub()
+            indices = [10, 500, 998]
+            ts = stub._scheduler_copy.timesteps[indices]
+            sigma = cls._get_sigmas(stub, ts, device="cpu")
+            assert sigma.shape == (3, 1, 1, 1, 1)
+            expected = stub._scheduler_copy.sigmas[indices]
+            assert torch.allclose(sigma.flatten(), expected)
+
+    def test_non_schedule_integer_timesteps(self):
+        # Shifted schedule: no integer timestep matches exactly, and t=0
+        # exists in no flow schedule at all.
+        for cls in self._adapters():
+            stub = self._stub(shift_offset=0.37)
+            ts = torch.tensor([0, 300, 999])
+            sigma = cls._get_sigmas(stub, ts, device="cpu")
+            assert sigma.shape == (3, 1, 1, 1, 1)
+            assert torch.all(torch.isfinite(sigma))
+            # Nearest schedule entry gives sigma ~ t/1000
+            assert torch.allclose(sigma.flatten(), ts.float() / 1000, atol=2e-3)

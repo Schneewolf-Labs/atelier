@@ -46,6 +46,15 @@ def get_paired_denoising_losses(adapter, model, batch, timestep_bias=None):
         zero = torch.tensor(0.0, device=device)
         return zero, zero, zero, forward_batch
 
+    chosen_latents, is_video = _to_model_layout(adapter, chosen_latents)
+    rejected_latents, _ = _to_model_layout(adapter, rejected_latents)
+
+    # Image-conditioned (editing) models need the control latents in the
+    # forward batch, in the same layout/normalization as the noisy input.
+    if isinstance(batch.get("control_latents"), torch.Tensor):
+        control, _ = _to_model_layout(adapter, batch["control_latents"].to(device))
+        forward_batch["control_latents"] = control
+
     # Sample shared noise and timesteps
     noise = torch.randn_like(chosen_latents)
     bsz = chosen_latents.shape[0]
@@ -73,6 +82,10 @@ def get_paired_denoising_losses(adapter, model, batch, timestep_bias=None):
     # Compute targets via adapter
     target_chosen = adapter.compute_target(noise, chosen_latents, sigmas)
     target_rejected = adapter.compute_target(noise, rejected_latents, sigmas)
+    if is_video:
+        # Back to the [B, C, 1, H, W] layout adapter.forward returns
+        target_chosen = target_chosen.permute(0, 2, 1, 3, 4)
+        target_rejected = target_rejected.permute(0, 2, 1, 3, 4)
 
     # Per-sample MSE in float32
     pred_chosen = pred_chosen.float()
@@ -114,6 +127,12 @@ def get_single_denoising_loss(adapter, model, batch, timestep_bias=None):
         zero = torch.tensor(0.0, device=device)
         return zero, zero, forward_batch
 
+    latents, is_video = _to_model_layout(adapter, latents)
+
+    if isinstance(batch.get("control_latents"), torch.Tensor):
+        control, _ = _to_model_layout(adapter, batch["control_latents"].to(device))
+        forward_batch["control_latents"] = control
+
     noise = torch.randn_like(latents)
     bsz = latents.shape[0]
 
@@ -132,6 +151,9 @@ def get_single_denoising_loss(adapter, model, batch, timestep_bias=None):
     noisy_latents = adapter.add_noise(latents, noise, timesteps, sigmas)
     prediction = adapter.forward(model, noisy_latents, timesteps, forward_batch)
     target = adapter.compute_target(noise, latents, sigmas)
+    if is_video:
+        # Back to the [B, C, 1, H, W] layout adapter.forward returns
+        target = target.permute(0, 2, 1, 3, 4)
 
     prediction = prediction.float()
     target = target.float()
@@ -141,6 +163,26 @@ def get_single_denoising_loss(adapter, model, batch, timestep_bias=None):
     mean_loss = F.mse_loss(prediction, target, reduction="mean")
 
     return per_sample, mean_loss, forward_batch
+
+
+def _to_model_layout(adapter, latents):
+    """Map VAE-layout latents to the layout the model's forward expects.
+
+    Mirrors FlowMatchingLoss: video-VAE latents arrive as [B, C, 1, H, W]
+    and Qwen-style transformers want [B, 1, C, H, W]; 4-D (SD/SDXL) latents
+    pass through unchanged. Also applies the adapter's latent normalization
+    when it has one (a no-op for DDPM adapters, which normalize at encode
+    time via the VAE scaling factor).
+
+    Returns (latents, is_video) — is_video tells the caller to permute the
+    target back to the [B, C, 1, H, W] layout adapter.forward returns.
+    """
+    is_video = latents.ndim == 5
+    if is_video:
+        latents = latents.permute(0, 2, 1, 3, 4)
+    if hasattr(adapter, "normalize_latents"):
+        latents = adapter.normalize_latents(latents)
+    return latents, is_video
 
 
 def _get_latents(adapter, batch, latents_key, image_key, device):

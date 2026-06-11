@@ -35,6 +35,16 @@ def _make_single_batch(bsz=2, channels=4, spatial=8):
     }
 
 
+def _make_video_paired_batch(bsz=2, channels=4, spatial=8):
+    """Paired batch in Qwen video-VAE layout [B, C, 1, H, W] with control latents."""
+    return {
+        "chosen_latents": torch.randn(bsz, channels, 1, spatial, spatial),
+        "rejected_latents": torch.randn(bsz, channels, 1, spatial, spatial),
+        "control_latents": torch.randn(bsz, channels, 1, spatial, spatial),
+        "prompt_embeds": torch.randn(bsz, 16, 64),
+    }
+
+
 def _make_flow_matching_batch(bsz=2, channels=4, spatial=8):
     """Create a batch for flow matching loss with 5D latents."""
     return {
@@ -122,6 +132,16 @@ class TestEpsilonLoss:
         assert loss.item() >= 0
         assert "mse" in metrics
 
+    def test_video_latents(self):
+        adapter = FlowMatchingMockAdapter()
+        loss_fn = EpsilonLoss()
+        batch = {
+            "image_latents": torch.randn(2, 4, 1, 8, 8),
+            "prompt_embeds": torch.randn(2, 16, 64),
+        }
+        loss, metrics = loss_fn(adapter, adapter.model, batch)
+        assert torch.isfinite(loss)
+
     def test_create_collator(self):
         loss_fn = EpsilonLoss()
         assert isinstance(loss_fn.create_collator(), GenerationCollator)
@@ -177,6 +197,13 @@ class TestDiffusionDPOLoss:
         beta_end = loss_fn._get_beta()
         # Cosine: starts near 0, peaks at middle, back to 0
         assert beta_mid > beta_start or beta_mid > beta_end
+
+    def test_video_latents(self):
+        adapter = FlowMatchingMockAdapter()
+        loss_fn = DiffusionDPOLoss(beta=0.1, timestep_bias_range=None)
+        batch = _make_video_paired_batch()
+        loss, metrics = loss_fn(adapter, adapter.model, batch)
+        assert torch.isfinite(loss)
 
     def test_logit_clamping(self):
         adapter = MockAdapter()
@@ -390,6 +417,61 @@ class TestLossUtils:
             adapter, adapter.model, batch, timestep_bias=(0.3, 0.8),
         )
         assert chosen_per.shape == (2,)
+
+    def test_get_paired_with_video_latents(self):
+        import warnings
+
+        from atelier.losses.utils import get_paired_denoising_losses
+        adapter = FlowMatchingMockAdapter()
+        normalize_calls = []
+
+        def mock_normalize(latents):
+            normalize_calls.append(tuple(latents.shape))
+            return latents
+
+        adapter.normalize_latents = mock_normalize
+
+        seen = {}
+        orig_forward = adapter.forward
+
+        def spy_forward(model, noisy, timesteps, fb):
+            seen["noisy"] = tuple(noisy.shape)
+            seen["control"] = tuple(fb["control_latents"].shape)
+            return orig_forward(model, noisy, timesteps, fb)
+
+        adapter.forward = spy_forward
+        batch = _make_video_paired_batch()
+        with warnings.catch_warnings():
+            # A layout mismatch between prediction and target would
+            # broadcast inside mse_loss and emit a UserWarning.
+            warnings.simplefilter("error")
+            chosen_per, rejected_per, sft_loss, _ = get_paired_denoising_losses(
+                adapter, adapter.model, batch,
+            )
+        assert chosen_per.shape == (2,)
+        assert rejected_per.shape == (2,)
+        assert torch.isfinite(sft_loss)
+        # chosen + rejected + control, all in model layout [B, 1, C, H, W]
+        assert normalize_calls == [(2, 1, 4, 8, 8)] * 3
+        assert seen["noisy"] == (2, 1, 4, 8, 8)
+        assert seen["control"] == (2, 1, 4, 8, 8)
+
+    def test_get_single_with_video_latents(self):
+        import warnings
+
+        from atelier.losses.utils import get_single_denoising_loss
+        adapter = FlowMatchingMockAdapter()
+        batch = {
+            "image_latents": torch.randn(2, 4, 1, 8, 8),
+            "prompt_embeds": torch.randn(2, 16, 64),
+        }
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            per_sample, mean_loss, _ = get_single_denoising_loss(
+                adapter, adapter.model, batch,
+            )
+        assert per_sample.shape == (2,)
+        assert mean_loss.shape == ()
 
     def test_get_paired_missing_latents(self):
         from atelier.losses.utils import get_paired_denoising_losses
