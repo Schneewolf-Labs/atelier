@@ -128,6 +128,33 @@ L = mean((pi_margin - ref_margin - 1/(2*beta))^2)
 
 **Requires reference model.** The `1/(2*beta)` term is a target margin.
 
+## Flow-GRPO (FlowGRPOLoss)
+
+Online policy-gradient over an SDE denoising trajectory (Flow-GRPO / DanceGRPO). A
+denoising **step** is the analog of an LLM **token**; a sampled **image** is the analog
+of a **completion**. Unlike every loss above, there are **no target images** — images
+are sampled by the current policy and scored by a reward function. See
+[Flow-GRPO](flow-grpo.md) for the full online loop.
+
+```
+# Per-image advantage, group-normalized over the G samples of each prompt
+A_i = (r_i - mean(r_group)) [ / std(r_group) if scale_rewards ]
+
+# Per denoising-step PPO surrogate (ratio of current vs sampling-policy logprob)
+ratio   = exp(logprob_cur - logprob_old)
+L_step  = -min(ratio * A, clip(ratio, 1-eps, 1+eps) * A)  +  beta * KL(cur || ref)
+
+# Reduction
+grpo:    mean_i( sum_step(L_step * mask) / len_i )   # per-trajectory length norm
+dr_grpo: sum(L_step * mask) / (N * S)                # constant norm, bias-corrected
+```
+
+The reference KL uses the k3 estimator `exp(ref-cur) - (ref-cur) - 1` (non-negative,
+low variance). `beta=0` runs reference-free (the common diffusion default).
+
+**Requires an SDE sampler** (`adapter.sample_with_logprobs`) and a synchronous
+`ImageRewardFn`. Reference policy = the LoRA adapter disabled (no second model copy).
+
 ## Summary Table
 
 | Loss | Reference Model? | Paired Data? | Best For |
@@ -140,3 +167,4 @@ L = mean((pi_margin - ref_margin - 1/(2*beta))^2)
 | **CPO** | No | Yes | Alternative to ORPO |
 | **KTO** | Yes | **No** (unpaired) | When you only have quality labels |
 | **IPO** | Yes | Yes | Noisy preference labels |
+| **Flow-GRPO** | Optional (disabled adapter) | **No** (online rollout + reward) | Reward-driven RL fine-tuning |
