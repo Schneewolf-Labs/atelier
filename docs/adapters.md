@@ -59,12 +59,14 @@ class MyAdapter(ModelAdapter):
         """
         ...
 
-    def compute_target(self, noise, latents, sigmas):
+    def compute_target(self, noise, latents, sigmas, timesteps=None):
         """What the model should predict.
 
         Flow matching: noise - latents (velocity)
         Epsilon: noise
-        V-prediction: depends on scheduler
+        V-prediction: alpha_t * noise - sigma_t * latents (needs timesteps)
+
+        Losses always pass ``timesteps=`` as a keyword.
         """
         ...
 
@@ -93,41 +95,48 @@ class MyAdapter(ModelAdapter):
         ...
 ```
 
-## Example: adding FLUX support
+## Start from a shared base
+
+Most new models don't need the full protocol written from scratch:
+
+| Base | Gives you | Used by |
+|---|---|---|
+| `DDPMAdapter` (`adapters/ddpm.py`) | DDPM timesteps, `add_noise`, epsilon / v-prediction / sample targets | `StableDiffusionAdapter`, `SDXLAdapter` |
+| `FlowMatchAdapter` (`adapters/flow.py`) | Rectified-flow noising + velocity target, shifted logit-normal / uniform / mode timestep sampling | everything below |
+| `DiffusersFlowAdapter` (`adapters/flow.py`) | + loading (encoders / VAE / deferred transformer / single-file transformer), VAE-normalized `encode_images`, `free_encoders`, PEFT-format `save_lora` | `SD3Adapter`, `FluxAdapter`, `ChromaAdapter`, `ZImageAdapter` |
+
+A new diffusers-backed flow DiT is then two class attributes and two methods.
+The FLUX adapter is the worked example:
 
 ```python
-class FluxAdapter(ModelAdapter):
+class FluxAdapter(DiffusersFlowAdapter):
+    pipeline_class = "FluxPipeline"              # diffusers attribute names
+    transformer_class = "FluxTransformer2DModel"
 
-    def __init__(self, pretrained_path, device="cuda", dtype=None):
-        from diffusers import FluxPipeline, FluxTransformer2DModel
-
-        self._dtype = dtype or torch.bfloat16
-        pipe = FluxPipeline.from_pretrained(pretrained_path, torch_dtype=self._dtype)
-
-        self._model = pipe.transformer
-        self._vae = pipe.vae
-        self._text_encoder = pipe.text_encoder
-        self._text_encoder_2 = pipe.text_encoder_2
-        self._scheduler = pipe.scheduler
-        self._pipe = pipe
-        # ... freeze encoders, etc.
-
-    @property
-    def model(self):
-        return self._model
+    def encode_text(self, prompts, device=None, **kwargs):
+        prompt_embeds, pooled, _ = self._pipeline.encode_prompt(prompt=prompts, prompt_2=None, device=device)
+        return {"prompt_embeds": prompt_embeds, "pooled_prompt_embeds": pooled}
 
     def forward(self, model, noisy_latents, timesteps, batch):
-        # FLUX-specific: pack latents, pass text/pooled embeds, guidance
-        return model(
-            hidden_states=noisy_latents,
-            timestep=timesteps,
-            encoder_hidden_states=batch["prompt_embeds"],
-            pooled_projections=batch["pooled_prompt_embeds"],
-            return_dict=False,
-        )[0]
-
-    # ... implement remaining methods
+        # pack 2x2 patches, build RoPE ids, feed sigma (= t / 1000) + guidance, unpack
+        ...
 ```
+
+Whatever `encode_text` returns is cached by `cache_embeddings`, carried by
+`EditingDataset`, and stacked by `EditingCollator` (`prompt_embeds` /
+`prompt_embeds_mask` are padded to the longest sequence; other tensors are
+stacked as-is), so extra conditioning like `pooled_prompt_embeds` reaches
+`forward` without touching the data pipeline.
+
+**Get the conventions from a reference implementation, not from vibes.**
+Things like "Z-Image is fed `1 - sigma` and its output is negated" or "FLUX
+text RoPE ids are all zero" are invisible in a loss curve until samples come
+out wrong. [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)
+is a compact, single-codebase reference for per-model latent scale/shift,
+timestep conventions, flow shift defaults, and text-encoder layer choices;
+the diffusers pipeline's `__call__` is the other. Pin each one down with a
+test against a tiny randomly-initialized transformer (see
+`tests/test_model_adapters.py`).
 
 ## Key decisions
 
@@ -138,7 +147,7 @@ class FluxAdapter(ModelAdapter):
 
 **Why not just one big class?**
 
-Because adapters and losses compose independently. `FlowMatchingLoss` works with `QwenEditAdapter`, `FluxAdapter`, or any future flow matching model. `DiffusionDPOLoss` works with `SDXLAdapter` or any epsilon-prediction model. You get M x N combinations from M adapters and N losses.
+Because adapters and losses compose independently. `FlowMatchingLoss` works with `QwenEditAdapter`, `FluxAdapter`, `SD3Adapter`, `ZImageAdapter`, or any future flow matching model. `DiffusionDPOLoss` works with any adapter — DDPM or flow — because it only talks to the adapter protocol. You get M x N combinations from M adapters and N losses.
 
 ## Tips
 

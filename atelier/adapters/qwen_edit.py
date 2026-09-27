@@ -198,7 +198,7 @@ class QwenEditAdapter(ModelAdapter):
         sigmas = sigmas.to(latents.device, latents.dtype)
         return (1.0 - sigmas) * latents + sigmas * noise
 
-    def compute_target(self, noise, latents, sigmas):
+    def compute_target(self, noise, latents, sigmas, timesteps=None):
         """Flow matching target: noise - latents."""
         return noise - latents
 
@@ -282,7 +282,7 @@ class QwenEditAdapter(ModelAdapter):
         from peft.utils import get_peft_model_state_dict
 
         os.makedirs(path, exist_ok=True)
-        from .qwen_image import strip_peft_prefix
+        from .base import strip_peft_prefix
         state_dict = strip_peft_prefix(get_peft_model_state_dict(model))
         QwenImagePipeline.save_lora_weights(path, state_dict, safe_serialization=True)
         logger.info("LoRA weights saved to %s", path)

@@ -1,16 +1,15 @@
 import gc
 import logging
 
-import numpy as np
 import torch
-from PIL import Image
 
-from .base import ModelAdapter
+from .base import is_single_file, pil_to_tensor
+from .ddpm import DDPMAdapter
 
 logger = logging.getLogger(__name__)
 
 
-class SDXLAdapter(ModelAdapter):
+class SDXLAdapter(DDPMAdapter):
     """Adapter for Stable Diffusion XL (UNet + dual CLIP + DDPM).
 
     Handles:
@@ -18,22 +17,31 @@ class SDXLAdapter(ModelAdapter):
     - Dual text encoder encoding (CLIP-L + CLIP-G)
     - VAE encoding with float32 stability
     - UNet forward pass with added_cond_kwargs
-    - DDPM noise scheduling (epsilon prediction)
+    - DDPM noise scheduling (epsilon or v-prediction)
     - UNet layer freezing strategies
     - Full pipeline or UNet-only saving
+
+    ``base_model`` may be a diffusers repo/dir or a single ``.safetensors``
+    checkpoint (the format stable-diffusion.cpp and most community SDXL
+    finetunes ship in). Pass ``prediction_type="v_prediction"`` for v-pred
+    finetunes whose bundled scheduler config still says epsilon.
     """
 
-    def __init__(self, base_model, weights=None, use_base_vae=False, device="cuda", dtype=None):
+    def __init__(self, base_model, weights=None, use_base_vae=False, device="cuda", dtype=None,
+                 prediction_type=None):
         from diffusers import DDPMScheduler, StableDiffusionXLPipeline
 
         self._dtype = dtype or torch.float16
         self._device = device
 
         # Load base pipeline
-        pipe = StableDiffusionXLPipeline.from_pretrained(
-            base_model, torch_dtype=self._dtype, use_safetensors=True,
-            variant="fp16" if self._dtype == torch.float16 else None,
-        )
+        if is_single_file(base_model):
+            pipe = StableDiffusionXLPipeline.from_single_file(base_model, torch_dtype=self._dtype)
+        else:
+            pipe = StableDiffusionXLPipeline.from_pretrained(
+                base_model, torch_dtype=self._dtype, use_safetensors=True,
+                variant="fp16" if self._dtype == torch.float16 else None,
+            )
 
         # Load custom weights if provided
         if weights is not None:
@@ -58,8 +66,9 @@ class SDXLAdapter(ModelAdapter):
         self._text_encoder.requires_grad_(False)
         self._text_encoder_2.requires_grad_(False)
 
-        # Noise scheduler
-        self._scheduler = DDPMScheduler.from_pretrained(base_model, subfolder="scheduler")
+        # Noise scheduler — built from the loaded pipeline's config so
+        # single-file checkpoints (no scheduler/ subfolder) work too.
+        self._init_ddpm(DDPMScheduler.from_config(pipe.scheduler.config), prediction_type)
 
         # Test VAE
         self._test_vae(base_model)
@@ -94,6 +103,9 @@ class SDXLAdapter(ModelAdapter):
             latent = self._vae.encode(test).latent_dist.sample()
 
             if torch.isnan(latent).any():
+                if is_single_file(base_model):
+                    logger.warning("VAE produced NaN; single-file checkpoint has no base VAE to reload from")
+                    return
                 logger.warning("VAE produced NaN, reloading from base model")
                 from diffusers import AutoencoderKL
 
@@ -106,10 +118,6 @@ class SDXLAdapter(ModelAdapter):
     @property
     def model(self):
         return self._model
-
-    @property
-    def noise_scheduler(self):
-        return self._scheduler
 
     @property
     def tokenizer(self):
@@ -128,18 +136,13 @@ class SDXLAdapter(ModelAdapter):
             latents = latents * self._vae.config.scaling_factor
         return latents
 
-    def encode_images(self, images, device=None, **kwargs):
+    def encode_images(self, images, height=None, width=None, device=None, **kwargs):
         """Encode PIL images to latents via VAE (float32 for stability)."""
         device = device or self._device
         latents_list = []
 
         for image in images:
-            if not isinstance(image, Image.Image):
-                image = Image.open(image) if isinstance(image, str) else Image.fromarray(np.uint8(image))
-            image = image.convert("RGB")
-
-            img_np = np.array(image).astype(np.float32)
-            img_tensor = torch.from_numpy(img_np / 127.5 - 1.0).permute(2, 0, 1)
+            img_tensor = pil_to_tensor(image, height, width)
             img_tensor = img_tensor.unsqueeze(0).to(device=device, dtype=self._vae.dtype)
 
             latents = self._vae.encode(img_tensor).latent_dist.sample()
@@ -197,20 +200,6 @@ class SDXLAdapter(ModelAdapter):
             "pooled_prompt_embeds": pooled_prompt_embeds,
             "time_ids": time_ids,
         }
-
-    def sample_timesteps(self, batch_size, device):
-        """Sample DDPM timesteps. Returns (timesteps, None) — no sigmas for DDPM."""
-        T = self._scheduler.config.num_train_timesteps
-        timesteps = torch.randint(0, T, (batch_size,), device=device, dtype=torch.long)
-        return timesteps, None
-
-    def add_noise(self, latents, noise, timesteps, sigmas=None):
-        """DDPM noise addition via scheduler."""
-        return self._scheduler.add_noise(latents, noise, timesteps)
-
-    def compute_target(self, noise, latents, sigmas=None):
-        """Epsilon prediction target: just the noise."""
-        return noise
 
     def forward(self, model, noisy_latents, timesteps, batch):
         """Run UNet forward pass with SDXL conditioning."""

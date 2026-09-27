@@ -11,7 +11,7 @@ license = { file = "LICENSE" }
 authors = [{ name = "Schneewolf Labs" }]
 requires-python = ">=3.10"
 keywords = [
-    "diffusion", "lora", "qwen-image", "sdxl", "fine-tuning",
+    "diffusion", "lora", "qwen-image", "sdxl", "sd3", "flux", "chroma", "z-image", "fine-tuning",
     "schneewolf-labs", "atelier",
 ]
 classifiers = [
@@ -38,7 +38,9 @@ dependencies = [
 quantization = ["bitsandbytes>=0.41.0"]
 logging = ["wandb>=0.15.0"]
 yaml = ["PyYAML>=6.0"]
-dev = ["pytest>=7.0", "ruff>=0.1.0", "PyYAML>=6.0"]
+# diffusers is in dev (not core) so CI can run the adapter tests against tiny
+# random transformers; users still install a diffusers matching their torch.
+dev = ["pytest>=7.0", "ruff>=0.1.0", "PyYAML>=6.0", "diffusers>=0.36.0"]
 
 [project.urls]
 Homepage = "https://github.com/Schneewolf-Labs/atelier"

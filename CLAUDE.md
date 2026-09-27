@@ -26,12 +26,18 @@ atelier/
 ├── registry.py          # String → adapter/loss class resolution (for YAML/CLI)
 ├── train.py             # YAML config + CLI entry point (python -m atelier.train)
 ├── adapters/
-│   ├── base.py          # ModelAdapter protocol
+│   ├── base.py          # ModelAdapter protocol + shared helpers (PEFT LoRA save, single-file detection)
+│   ├── ddpm.py          # DDPMAdapter base — epsilon / v-prediction / sample targets
+│   ├── flow.py          # FlowMatchAdapter (shift + timestep sampling) + DiffusersFlowAdapter (loading/VAE/save)
+│   ├── sd.py            # SD 1.x / 2.x (UNet + CLIP + DDPM)
+│   ├── sdxl.py          # SDXL (UNet + dual CLIP + DDPM)
+│   ├── sd3.py           # SD 3 / 3.5 (MMDiT + CLIP-L/G + T5 + flow matching)
+│   ├── flux.py          # FLUX.1 dev/schnell, Kontext (reference tokens), Chroma (T5-only, masked)
+│   ├── z_image.py       # Z-Image (single-stream DiT + Qwen3; reversed time, negated output)
 │   ├── qwen_edit.py     # Qwen-Image-Edit (DiT + video VAE + flow matching, image-conditioned text encoder)
-│   ├── qwen_image.py    # Qwen-Image (DiT + video VAE + flow matching, text-to-image)
-│   └── sdxl.py          # SDXL (UNet + dual CLIP + DDPM)
+│   └── qwen_image.py    # Qwen-Image (DiT + video VAE + flow matching, text-to-image)
 ├── losses/
-│   ├── flow_matching.py   # Flow matching MSE (Qwen video-VAE layout; 4-D models need a matching collator)
+│   ├── flow_matching.py   # Flow matching MSE (5-D Qwen video-VAE and 4-D SD3/FLUX/Z-Image latents)
 │   ├── epsilon.py         # Epsilon prediction (DDPM)
 │   ├── diffusion_dpo.py   # DPO on denoising MSE + SFT regularization
 │   ├── diffusion_cpo.py   # CPO (reference-free contrastive preference)
@@ -73,11 +79,21 @@ class ModelAdapter:
     def encode_text(self, prompts, **kw) -> dict     # Text encode
     def sample_timesteps(self, bsz) -> (t, sigmas)  # Timestep sampling
     def add_noise(self, latents, noise, t, sigmas)   # Create noisy input
-    def compute_target(self, noise, latents, sigmas)  # What model should predict
+    def compute_target(self, noise, latents, sigmas, timesteps=None)  # What model should predict
     def forward(self, noisy, timesteps, batch)        # Architecture-specific forward
     def save_lora(self, model, path)                  # LoRA weight saving
     def save_model(self, model, path)                 # Full model saving
 ```
+
+## Adding a Model
+
+- DDPM UNet → subclass `DDPMAdapter`; flow DiT on diffusers → subclass `DiffusersFlowAdapter`
+  (set `pipeline_class` / `transformer_class`, implement `encode_text` + `forward`).
+- Take per-model conventions (VAE scale/shift, timestep scaling/direction, flow shift, text-encoder
+  layer, RoPE ids) from the diffusers pipeline `__call__` and cross-check against
+  stable-diffusion.cpp (`src/model/`, `src/runtime/denoiser.hpp`, `src/model/vae/auto_encoder_kl.hpp`).
+- Pin them with a test against a tiny random transformer in `tests/test_model_adapters.py`
+  (no checkpoint downloads in tests).
 
 ## Prior Art
 
