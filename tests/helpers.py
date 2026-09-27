@@ -69,7 +69,7 @@ class MockAdapter(ModelAdapter):
             return (1 - s) * latents + s * noise
         return latents + noise
 
-    def compute_target(self, noise, latents, sigmas):
+    def compute_target(self, noise, latents, sigmas, timesteps=None):
         return noise - latents
 
     def forward(self, model, noisy_latents, timesteps, batch):

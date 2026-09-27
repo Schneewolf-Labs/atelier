@@ -11,6 +11,8 @@ class GenerationDataset(Dataset):
     For SFT: expects columns (prompt, image) — single target image.
 
     Supports dual tokenizers (e.g. SDXL's two CLIP tokenizers) via tokenizer_2.
+    Without a tokenizer, only the raw ``prompt`` is emitted and the loss asks
+    the adapter to encode it (``adapter.encode_text(prompts)``).
     """
 
     def __init__(self, dataset, tokenizer=None, tokenizer_2=None, image_size=1024, max_samples=None):
@@ -28,7 +30,9 @@ class GenerationDataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.dataset[idx]
-        result = {}
+        # Raw prompt always rides along: adapters without a tokenizer in the
+        # dataset (SD3, FLUX, Z-Image, ...) encode it on the fly.
+        result = {"prompt": item.get("prompt", "")}
 
         # Tokenize prompt
         if self.tokenizer is not None:

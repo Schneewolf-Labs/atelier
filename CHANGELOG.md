@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **New adapters**, cross-checked against stable-diffusion.cpp and the diffusers
+  pipelines:
+  - `StableDiffusionAdapter` (`sd`) — SD 1.x / 2.x, epsilon or v-prediction, `clip_skip`.
+  - `SD3Adapter` (`sd3`) — SD 3 / 3.5, optional T5 drop (`load_t5=False`).
+  - `FluxAdapter` (`flux`) — FLUX.1 dev / schnell; `guidance` (default 1.0),
+    resolution-matched dynamic shift, single-file transformer via `transformer_path=`.
+  - `FluxKontextAdapter` (`flux_kontext`) — FLUX.1 Kontext editing; `control_latents`
+    become index-1 reference tokens, prediction cropped to the target.
+  - `ChromaAdapter` (`chroma`) — T5-only, padding mask carried into the DiT joint attention.
+  - `ZImageAdapter` (`z_image`) — Z-Image / Turbo; reversed time and negated output handled.
+- Shared bases: `DDPMAdapter` (epsilon / v-pred / sample targets) and
+  `FlowMatchAdapter` / `DiffusersFlowAdapter` (shifted logit-normal / uniform / mode
+  timestep sampling, deferred-transformer loading, VAE-normalized latents,
+  PEFT-format LoRA saving).
+- `SDXLAdapter`: `prediction_type=` (v-pred finetunes) and single-file checkpoints;
+  `encode_images` now honors `height` / `width` from `cache_embeddings`.
+- `EditingDataset` / `EditingCollator` carry any extra cached text tensors
+  (e.g. `pooled_prompt_embeds`); `GenerationDataset` always emits `prompt`, and
+  losses encode it on the fly for adapters that own their tokenizers.
+
+### Changed
+- Adapter protocol: `compute_target(noise, latents, sigmas, timesteps=None)`. Losses
+  pass `timesteps=` (needed for v-prediction). Custom adapters should accept the
+  keyword.
+- `strip_peft_prefix` moved to `atelier.adapters.base` (still importable from
+  `atelier.adapters.qwen_image`).
+
 ## [0.1.1] - 2026-05-30
 
 ### Added

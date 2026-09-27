@@ -21,6 +21,43 @@ pip install -e ".[logging]"        # wandb
 pip install -e ".[all]"            # everything
 ```
 
+## Supported models
+
+| Adapter | Registry name | Models | Objective |
+|---|---|---|---|
+| `StableDiffusionAdapter` | `sd` | SD 1.x, SD 2.x (base + 768-v) | DDPM, epsilon / v-pred |
+| `SDXLAdapter` | `sdxl` | SDXL + finetunes (incl. v-pred) | DDPM, epsilon / v-pred |
+| `SD3Adapter` | `sd3` | SD 3 / 3.5 (Medium, Large) | flow, shift 3.0 |
+| `FluxAdapter` | `flux` | FLUX.1 dev / schnell | flow, dynamic shift |
+| `FluxKontextAdapter` | `flux_kontext` | FLUX.1 Kontext (editing) | flow + reference tokens |
+| `ChromaAdapter` | `chroma` | Chroma | flow, T5-only, masked |
+| `ZImageAdapter` | `z_image` | Z-Image, Z-Image-Turbo | flow, shift 3.0 |
+| `QwenImageAdapter` | `qwen_image` | Qwen-Image | flow |
+| `QwenEditAdapter` | `qwen_edit` | Qwen-Image-Edit | flow + control image |
+
+Every DiT above takes LoRA on `["to_q", "to_k", "to_v", "to_out.0"]` (the
+UNets too). `FlowMatchingLoss` is for the flow models; `EpsilonLoss` (SFT) and
+the preference family (DPO / CPO / IPO / KTO / SimPO / ORPO) work with any
+adapter, DDPM or flow.
+
+Per-model conventions (VAE scale/shift, how the timestep is fed, flow shift,
+text-encoder layers) were cross-checked against
+[stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) and the
+diffusers pipelines, and pinned by tests against tiny random transformers —
+so a LoRA trained here samples correctly in both. Worth knowing:
+
+- **FLUX.1-dev** is trained at `guidance=1.0` by default (kohya / ai-toolkit
+  convention); pass `guidance=3.5` for diffusers' reference behavior. The time
+  shift defaults to the resolution-dependent `exp(mu)` the sampler uses at
+  `resolution=1024` (≈3.16); override with `shift=`.
+- **FLUX single-file weights** (e.g. the `flux1-dev.safetensors` sd.cpp loads)
+  work via `transformer_path=`; `pretrained_path` still supplies configs, VAE
+  and encoders. SD / SDXL accept a single `.safetensors` checkpoint directly.
+- **Z-Image** runs reversed time (`1 - sigma`) with a negated output; the
+  adapter handles both so the shared velocity target holds.
+- **v-prediction** SD 2.x / SDXL finetunes often ship an epsilon scheduler
+  config — pass `prediction_type="v_prediction"`.
+
 ## Quick start
 
 ### Qwen-Image-Edit LoRA (flow matching)
@@ -154,6 +191,42 @@ trainer.train()
 trainer.save_model("./my-sdxl")
 ```
 
+### FLUX.1 / SD3 / Z-Image LoRA (flow matching)
+
+Same shape as Qwen-Image: cache embeddings, free the encoders, train. Swap the
+adapter class and the rest stays put.
+
+```python
+from peft import LoraConfig
+from atelier import AtelierTrainer, TrainingConfig
+from atelier.adapters import FluxAdapter  # or SD3Adapter, ZImageAdapter, ChromaAdapter
+from atelier.data import EditingDataset, cache_embeddings
+from atelier.losses import FlowMatchingLoss
+
+adapter = FluxAdapter("black-forest-labs/FLUX.1-dev")
+
+text_emb, target_emb, _ = cache_embeddings(raw_dataset, adapter, cache_dir="./output/cache")
+adapter.free_encoders()
+adapter.move_transformer_to_device()
+
+trainer = AtelierTrainer(
+    adapter=adapter,
+    config=TrainingConfig(output_dir="./output", num_epochs=10, batch_size=1,
+                          learning_rate=1e-4, gradient_checkpointing=True),
+    loss_fn=FlowMatchingLoss(),
+    train_dataset=EditingDataset(raw_dataset, cached_text_embeddings=text_emb,
+                                 cached_target_embeddings=target_emb),
+    peft_config=LoraConfig(r=16, lora_alpha=16, init_lora_weights="gaussian",
+                           target_modules=["to_k", "to_q", "to_v", "to_out.0"]),
+)
+trainer.train()
+trainer.save_model("./my-flux-lora")   # loads with FluxPipeline.load_lora_weights
+```
+
+For **Kontext** editing, use `FluxKontextAdapter("black-forest-labs/FLUX.1-Kontext-dev")`
+with a dataset that has a `rejected` (source image) column — exactly like the
+Qwen-Image-Edit flow. The source latents become reference tokens.
+
 ### With LoRA
 
 Pass a `peft_config` and Atelier handles the rest.
@@ -272,10 +345,16 @@ atelier/
 ├── config.py            # TrainingConfig dataclass
 ├── callbacks.py         # TrainerCallback base class
 ├── adapters/
-│   ├── base.py          # ModelAdapter protocol
+│   ├── base.py          # ModelAdapter protocol + shared helpers
+│   ├── ddpm.py          # DDPMAdapter base (epsilon / v-pred)
+│   ├── flow.py          # FlowMatchAdapter + DiffusersFlowAdapter bases (shift, sampling, loading)
+│   ├── sd.py            # SD 1.x / 2.x (UNet + CLIP + DDPM)
+│   ├── sdxl.py          # SDXL (UNet + dual CLIP + DDPM)
+│   ├── sd3.py           # SD 3 / 3.5 (MMDiT + CLIP-L/G + T5 + flow)
+│   ├── flux.py          # FLUX.1 dev / schnell / Kontext, Chroma
+│   ├── z_image.py       # Z-Image (single-stream DiT + Qwen3 + flow)
 │   ├── qwen_edit.py     # Qwen-Image-Edit (DiT + flow matching, image-conditioned)
-│   ├── qwen_image.py    # Qwen-Image (DiT + flow matching, text-to-image)
-│   └── sdxl.py          # SDXL (UNet + DDPM)
+│   └── qwen_image.py    # Qwen-Image (DiT + flow matching, text-to-image)
 ├── losses/
 │   ├── flow_matching.py # Flow matching MSE
 │   └── diffusion_dpo.py # DPO + SFT regularization
@@ -314,7 +393,7 @@ class MyAdapter(ModelAdapter):
     def encode_text(self):      ...  # Text encode
     def sample_timesteps(self): ...  # Timestep sampling
     def add_noise(self):        ...  # Create noisy input
-    def compute_target(self):   ...  # What model should predict
+    def compute_target(self):   ...  # What model should predict (noise, latents, sigmas, timesteps=)
     def forward(self):          ...  # Architecture-specific forward
     def save_lora(self):        ...  # Save LoRA weights
     def save_model(self):       ...  # Save full model

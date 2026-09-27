@@ -12,10 +12,10 @@ class FlowMatchingLoss:
 
     Built for the Qwen-Image / Qwen-Image-Edit DiTs, whose video VAE emits
     5-D latents ``[B, C, 1, H, W]``; those get permuted to the
-    ``[B, 1, C, H, W]`` layout the transformer expects. 4-D latents (the
-    SD3 / FLUX layout) are passed through unchanged, so the velocity-field
-    objective transfers to those models once an adapter + collator provide
-    the matching batch shape — no fork of the loss required.
+    ``[B, 1, C, H, W]`` layout the transformer expects. 4-D latents (SD3,
+    FLUX, Chroma, Z-Image — already VAE-normalized at encode time) pass
+    through unchanged; those adapters' extra conditioning (e.g.
+    ``pooled_prompt_embeds``) rides through :class:`EditingCollator`.
 
     The collator is pluggable: it defaults to :class:`EditingCollator` (which
     also handles the no-control text-to-image case) but can be overridden for
@@ -58,7 +58,7 @@ class FlowMatchingLoss:
         model_pred = adapter.forward(model, noisy_latents, timesteps, batch)
 
         # Compute target and loss
-        target = adapter.compute_target(noise, target_latents, sigmas)
+        target = adapter.compute_target(noise, target_latents, sigmas, timesteps=timesteps)
         if is_video:
             target = target.permute(0, 2, 1, 3, 4)  # back to model_pred layout
 

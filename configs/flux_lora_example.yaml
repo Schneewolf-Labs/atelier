@@ -1,0 +1,50 @@
+# Example: train a FLUX.1-dev text-to-image LoRA.
+#
+# Run with:
+#   python -m atelier.train --config configs/flux_lora_example.yaml
+#
+# Swap `adapter` for sd3 / z_image / chroma (and `pretrained` to match) —
+# nothing else in this file is FLUX-specific.
+
+model:
+  pretrained: "black-forest-labs/FLUX.1-dev"
+  adapter: "flux"
+  adapter_args:
+    defer_transformer: true
+    guidance: 1.0              # distilled-guidance value fed while training
+    resolution: 1024           # picks the matching dynamic shift (≈3.16)
+    # shift: 3.16              # or set the time shift explicitly
+    # transformer_path: "~/models/flux1-dev.safetensors"  # single-file weights
+
+dataset:
+  jsonl: "./train.jsonl"       # rows: {"prompt": ..., "image": "path.png"}
+
+loss:
+  type: "flow_matching"
+
+peft:
+  type: "lora"
+  r: 16
+  lora_alpha: 16
+  target_modules: ["to_k", "to_q", "to_v", "to_out.0"]
+  init_lora_weights: "gaussian"
+
+cache:
+  enable: true
+  dir: "./output/cache"
+  target_area: 1048576         # 1024 × 1024
+
+training:
+  output_dir: "./output"
+  num_epochs: 10
+  batch_size: 1
+  gradient_accumulation_steps: 1
+  learning_rate: 1.0e-4
+  warmup_ratio: 0.05
+  max_grad_norm: 1.0
+  mixed_precision: "bf16"
+  gradient_checkpointing: true
+  optimizer: "adamw_8bit"
+  lr_scheduler: "constant_with_warmup"
+  save_steps: 500
+  seed: 42

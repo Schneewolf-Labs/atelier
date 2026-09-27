@@ -58,6 +58,10 @@ class EditingDataset(Dataset):
             text_data = self.cached_text[key]
             result["prompt_embeds"] = text_data["prompt_embeds"]
             result["prompt_embeds_mask"] = text_data.get("prompt_embeds_mask")
+            # Adapter-specific extras (e.g. pooled_prompt_embeds for SD3 / FLUX)
+            for k, v in text_data.items():
+                if k not in result:
+                    result[k] = v
         else:
             result["prompt"] = item["prompt"]
 
@@ -114,6 +118,15 @@ class EditingCollator:
             batch["prompt_embeds"] = torch.stack(padded_embeds)
             if padded_masks:
                 batch["prompt_embeds_mask"] = torch.stack(padded_masks)
+
+        # Fixed-shape extras every sample carries (pooled_prompt_embeds, ...)
+        handled = {"target_latents", "control_latents", "prompt_embeds", "prompt_embeds_mask"}
+        for key in examples[0]:
+            if key in handled:
+                continue
+            values = [ex.get(key) for ex in examples]
+            if all(isinstance(v, torch.Tensor) for v in values):
+                batch[key] = torch.stack(values)
 
         return batch
 

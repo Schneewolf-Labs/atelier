@@ -71,8 +71,8 @@ def get_paired_denoising_losses(adapter, model, batch, timestep_bias=None):
     pred_rejected = adapter.forward(model, noisy_rejected, timesteps, forward_batch)
 
     # Compute targets via adapter
-    target_chosen = adapter.compute_target(noise, chosen_latents, sigmas)
-    target_rejected = adapter.compute_target(noise, rejected_latents, sigmas)
+    target_chosen = adapter.compute_target(noise, chosen_latents, sigmas, timesteps=timesteps)
+    target_rejected = adapter.compute_target(noise, rejected_latents, sigmas, timesteps=timesteps)
 
     # Per-sample MSE in float32
     pred_chosen = pred_chosen.float()
@@ -131,7 +131,7 @@ def get_single_denoising_loss(adapter, model, batch, timestep_bias=None):
 
     noisy_latents = adapter.add_noise(latents, noise, timesteps, sigmas)
     prediction = adapter.forward(model, noisy_latents, timesteps, forward_batch)
-    target = adapter.compute_target(noise, latents, sigmas)
+    target = adapter.compute_target(noise, latents, sigmas, timesteps=timesteps)
 
     prediction = prediction.float()
     target = target.float()
@@ -174,5 +174,10 @@ def _get_text_conditioning(adapter, batch, device):
     # On-the-fly encoding via adapter (SDXL tokenized batch)
     if "input_ids" in batch:
         return adapter.encode_text(batch=batch, device=device)
+
+    # On-the-fly encoding from raw prompts (adapters that own their tokenizers)
+    if "prompt" in batch:
+        with torch.no_grad():
+            return adapter.encode_text(list(batch["prompt"]), device=device)
 
     return {}

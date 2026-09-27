@@ -8,9 +8,15 @@ import importlib
 from typing import Any
 
 ADAPTERS: dict[str, str] = {
-    "qwen_image": "atelier.adapters.qwen_image:QwenImageAdapter",
-    "qwen_edit":  "atelier.adapters.qwen_edit:QwenEditAdapter",
-    "sdxl":       "atelier.adapters.sdxl:SDXLAdapter",
+    "qwen_image":   "atelier.adapters.qwen_image:QwenImageAdapter",
+    "qwen_edit":    "atelier.adapters.qwen_edit:QwenEditAdapter",
+    "sd":           "atelier.adapters.sd:StableDiffusionAdapter",
+    "sdxl":         "atelier.adapters.sdxl:SDXLAdapter",
+    "sd3":          "atelier.adapters.sd3:SD3Adapter",
+    "flux":         "atelier.adapters.flux:FluxAdapter",
+    "flux_kontext": "atelier.adapters.flux:FluxKontextAdapter",
+    "chroma":       "atelier.adapters.flux:ChromaAdapter",
+    "z_image":      "atelier.adapters.z_image:ZImageAdapter",
 }
 
 LOSSES: dict[str, str] = {

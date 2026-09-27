@@ -6,23 +6,9 @@ import numpy as np
 import torch
 from PIL import Image
 
-from .base import ModelAdapter
+from .base import ModelAdapter, strip_peft_prefix
 
 logger = logging.getLogger(__name__)
-
-
-def strip_peft_prefix(state_dict: dict) -> dict:
-    """Strip ``base_model.model.`` (PEFT wrapper prefix) from state-dict keys.
-
-    ``get_peft_model_state_dict`` retains the wrapper prefix in some PEFT
-    versions; ``pipe.load_lora_weights`` then can't match the keys against
-    the unwrapped transformer's module tree. Stripping here is the
-    minimal-change fix that works across PEFT versions.
-
-    Module-level so callers can use it without subclassing the adapter,
-    and so it's trivially unit-testable without any ML stack imports.
-    """
-    return {k.replace("base_model.model.", ""): v for k, v in state_dict.items()}
 
 
 class QwenImageAdapter(ModelAdapter):
@@ -246,7 +232,7 @@ class QwenImageAdapter(ModelAdapter):
         sigmas = sigmas.to(latents.device, latents.dtype)
         return (1.0 - sigmas) * latents + sigmas * noise
 
-    def compute_target(self, noise, latents, sigmas):
+    def compute_target(self, noise, latents, sigmas, timesteps=None):
         return noise - latents
 
     def forward(self, model, noisy_latents, timesteps, batch):

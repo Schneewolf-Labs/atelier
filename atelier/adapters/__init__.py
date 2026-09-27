@@ -1,4 +1,13 @@
 from .base import ModelAdapter as ModelAdapter
+from .ddpm import DDPMAdapter as DDPMAdapter
+from .flow import DiffusersFlowAdapter as DiffusersFlowAdapter
+from .flow import FlowMatchAdapter as FlowMatchAdapter
+from .flux import ChromaAdapter as ChromaAdapter
+from .flux import FluxAdapter as FluxAdapter
+from .flux import FluxKontextAdapter as FluxKontextAdapter
 from .qwen_edit import QwenEditAdapter as QwenEditAdapter
 from .qwen_image import QwenImageAdapter as QwenImageAdapter
+from .sd import StableDiffusionAdapter as StableDiffusionAdapter
+from .sd3 import SD3Adapter as SD3Adapter
 from .sdxl import SDXLAdapter as SDXLAdapter
+from .z_image import ZImageAdapter as ZImageAdapter
