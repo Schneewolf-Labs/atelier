@@ -34,6 +34,7 @@ pip install -e ".[all]"            # everything
 | `ZImageAdapter` | `z_image` | Z-Image, Z-Image-Turbo | flow, shift 3.0 |
 | `QwenImageAdapter` | `qwen_image` | Qwen-Image | flow |
 | `QwenEditAdapter` | `qwen_edit` | Qwen-Image-Edit | flow + control image |
+| `QwenImage21Adapter` | `qwen_image_2_1` | Qwen-Image 2.1 (T2I + editing, RGBA) | flow, native port |
 
 Every DiT above takes LoRA on `["to_q", "to_k", "to_v", "to_out.0"]` (the
 UNets too). `FlowMatchingLoss` is for the flow models; `EpsilonLoss` (SFT) and
@@ -151,6 +152,41 @@ trainer = AtelierTrainer(
 trainer.train()
 trainer.save_model("./my-qwen-image-lora")
 ```
+
+### Qwen-Image 2.1 LoRA (native port — no diffusers support)
+
+diffusers doesn't ship Qwen-Image 2.1, so Atelier carries its own PyTorch port of
+the DiT (`atelier/models/qwen_image_2_1.py`), checked against
+stable-diffusion.cpp's implementation (`scripts/sdcpp_parity/`; a golden
+test keeps CI honest). It loads the released single files directly:
+
+```python
+from atelier.adapters import QwenImage21Adapter
+
+adapter = QwenImage21Adapter(
+    "Qwen-Image-2.1/diffusion_models/<bf16 file>.safetensors",  # bf16 — not the int8-convrot / fp8 files
+    vae_path="Qwen-Image-2.1/vae/qwen_image_2.1_vae_bf16.safetensors",
+    text_encoder_path="Qwen/Qwen3-VL-8B-Instruct",                       # stock HF release
+)
+text_emb, target_emb, control_emb = cache_embeddings(raw_dataset, adapter, cache_dir="./output/cache")
+adapter.free_encoders()
+adapter.move_transformer_to_device()
+# ... EditingDataset + FlowMatchingLoss + LoraConfig(target_modules=["to_q", "to_k", "to_v", "to_out.0"])
+```
+
+- **Editing** works like Qwen-Image-Edit: give the dataset a `rejected` (source)
+  column. The source is shown to Qwen3-VL and VAE-encoded at the same
+  resolution, so image sides must be multiples of 32 (`cache_embeddings`
+  rounds to 32 already).
+- **Transparency**: the VAE is RGBA. Opaque images train as alpha = 1; RGBA
+  images keep their alpha. Prompt with the official
+  "This is an RGBA image with transparency. … The image has alpha channel and
+  the background is transparent." template for transparent LoRAs.
+- **LoRA output** is `lora.safetensors` with `diffusion_model.*` keys +
+  `alpha`, which stable-diffusion.cpp and ComfyUI load directly.
+- Needs `transformers >= 4.57` (Qwen3-VL) and `torchvision` (its image processor).
+- One sample per DiT call (each has its own text/image layout); `batch_size > 1`
+  works but loops.
 
 ### SDXL DPO (preference optimization)
 
@@ -354,7 +390,10 @@ atelier/
 │   ├── flux.py          # FLUX.1 dev / schnell / Kontext, Chroma
 │   ├── z_image.py       # Z-Image (single-stream DiT + Qwen3 + flow)
 │   ├── qwen_edit.py     # Qwen-Image-Edit (DiT + flow matching, image-conditioned)
-│   └── qwen_image.py    # Qwen-Image (DiT + flow matching, text-to-image)
+│   ├── qwen_image.py    # Qwen-Image (DiT + flow matching, text-to-image)
+│   └── qwen_image_2_1.py # Qwen-Image 2.1 (native DiT port + Qwen3-VL + RGBA VAE)
+├── models/
+│   └── qwen_image_2_1.py # PyTorch ports of architectures diffusers doesn't ship
 ├── losses/
 │   ├── flow_matching.py # Flow matching MSE
 │   └── diffusion_dpo.py # DPO + SFT regularization

@@ -1,0 +1,49 @@
+# Example: Qwen-Image 2.1 LoRA (text-to-image; add a `rejected` column for editing).
+#
+#   python -m atelier.train --config configs/qwen_image_2_1_lora_example.yaml
+#
+# Weights: Comfy-Org/Qwen-Image-2.1 (bf16 diffusion model + VAE) and the stock
+# Qwen/Qwen3-VL-8B-Instruct. The int8-convrot / fp8 releases are inference-only.
+
+model:
+  # the bf16 file from Comfy-Org/Qwen-Image-2.1/diffusion_models (not int8-convrot / fp8)
+  pretrained: "~/models/Qwen-Image-2.1/diffusion_models/qwen_image_2.1_bf16.safetensors"
+  adapter: "qwen_image_2_1"
+  adapter_args:
+    vae_path: "~/models/Qwen-Image-2.1/vae/qwen_image_2.1_vae_bf16.safetensors"
+    text_encoder_path: "Qwen/Qwen3-VL-8B-Instruct"
+    defer_transformer: true
+    resolution: 1024           # picks sd.cpp's FLUX-style shift for this size (≈3.16)
+
+dataset:
+  jsonl: "./train.jsonl"       # {"prompt": ..., "image": "path.png"}; RGBA PNGs keep their alpha
+
+loss:
+  type: "flow_matching"
+
+peft:
+  type: "lora"
+  r: 32
+  lora_alpha: 32
+  target_modules: ["to_q", "to_k", "to_v", "to_out.0"]
+  init_lora_weights: "gaussian"
+
+cache:
+  enable: true
+  dir: "./output/cache"
+  target_area: 1048576         # 1024 × 1024 (sides rounded to 32)
+
+training:
+  output_dir: "./output"
+  num_epochs: 10
+  batch_size: 1                # the DiT runs one sample layout at a time
+  gradient_accumulation_steps: 4
+  learning_rate: 1.0e-4
+  warmup_ratio: 0.05
+  max_grad_norm: 1.0
+  mixed_precision: "bf16"
+  gradient_checkpointing: true
+  optimizer: "adamw_8bit"
+  lr_scheduler: "constant_with_warmup"
+  save_steps: 500
+  seed: 42

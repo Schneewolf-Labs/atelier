@@ -35,7 +35,11 @@ atelier/
 │   ├── flux.py          # FLUX.1 dev/schnell, Kontext (reference tokens), Chroma (T5-only, masked)
 │   ├── z_image.py       # Z-Image (single-stream DiT + Qwen3; reversed time, negated output)
 │   ├── qwen_edit.py     # Qwen-Image-Edit (DiT + video VAE + flow matching, image-conditioned text encoder)
-│   └── qwen_image.py    # Qwen-Image (DiT + video VAE + flow matching, text-to-image)
+│   ├── qwen_image.py    # Qwen-Image (DiT + video VAE + flow matching, text-to-image)
+│   └── qwen_image_2_1.py # Qwen-Image 2.1 (native DiT port, Qwen3-VL, RGBA 64-ch VAE; per-sample layouts)
+├── models/
+│   └── qwen_image_2_1.py  # Native PyTorch port of the Qwen-Image 2.1 DiT (+ VAE config/key converter,
+│                          #   Qwen3-VL conditioning) — diffusers has no support; parity-checked vs sd.cpp
 ├── losses/
 │   ├── flow_matching.py   # Flow matching MSE (5-D Qwen video-VAE and 4-D SD3/FLUX/Z-Image latents)
 │   ├── epsilon.py         # Epsilon prediction (DDPM)
@@ -94,6 +98,9 @@ class ModelAdapter:
   stable-diffusion.cpp (`src/model/`, `src/runtime/denoiser.hpp`, `src/model/vae/auto_encoder_kl.hpp`).
 - Pin them with a test against a tiny random transformer in `tests/test_model_adapters.py`
   (no checkpoint downloads in tests).
+- No diffusers support? Port the model into `atelier/models/` with checkpoint-compatible parameter
+  names, and check it against sd.cpp's runner with `scripts/sdcpp_parity/` (C++ harness + golden
+  outputs committed under `tests/data/` so CI re-checks parity without building sd.cpp).
 
 ## Prior Art
 

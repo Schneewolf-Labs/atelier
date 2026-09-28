@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Qwen-Image 2.1** (`QwenImage21Adapter`, `qwen_image_2_1`) via a native PyTorch
+  port — diffusers has no support. `atelier.models.qwen_image_2_1` ports sd.cpp's
+  single-stream DiT (block-causal text/reference/target sequence, t / t=0 dual
+  modulation, centred 3-axis RoPE) with checkpoint-compatible names; the RGBA,
+  64-channel VAE reuses diffusers' `AutoencoderKLWan` with an original→diffusers
+  key converter; Qwen3-VL conditioning follows sd.cpp's template, vision slots
+  and pre-norm hidden state. Text-to-image and reference editing, RGBA training
+  images, and LoRA export in sd.cpp / ComfyUI key layout.
+- `scripts/sdcpp_parity/`: C++ harness running sd.cpp's own Qwen-Image 2.1 runners
+  plus DiT / VAE comparison scripts; DiT golden outputs in `tests/data/` are checked
+  in CI.
+- `cache_embeddings` keeps alpha for RGBA sources and passes the resize target to
+  `encode_text` (vision-conditioned encoders see references at VAE resolution);
+  `EditingCollator` pads `prompt_token_types` like the mask.
 - **New adapters**, cross-checked against stable-diffusion.cpp and the diffusers
   pipelines:
   - `StableDiffusionAdapter` (`sd`) — SD 1.x / 2.x, epsilon or v-prediction, `clip_skip`.
