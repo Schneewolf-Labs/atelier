@@ -135,8 +135,12 @@ class TestCheckpoint:
         save_file({prefix + k: v.contiguous() for k, v in model.state_dict().items()}, tmp_path / "dit.safetensors")
         loaded = load_transformer(tmp_path / "dit.safetensors", dtype=torch.float32).eval()
         _, x, t, ctx, types, refs = build_case("t2i")
+        loaded_sd = loaded.state_dict()
+        assert loaded_sd.keys() == model.state_dict().keys()
+        assert all(torch.equal(v, loaded_sd[k]) for k, v in model.state_dict().items())
+        # Outputs: numerically equal (not bitwise — BLAS may take different paths per buffer layout)
         with torch.no_grad():
-            assert torch.equal(model(x, t, ctx, types, refs), loaded(x, t, ctx, types, refs))
+            assert torch.allclose(model(x, t, ctx, types, refs), loaded(x, t, ctx, types, refs), atol=1e-6)
 
     def test_quantized_checkpoint_rejected(self, tmp_path):
         sd = {k: v.contiguous() for k, v in _tiny_model().state_dict().items()}
