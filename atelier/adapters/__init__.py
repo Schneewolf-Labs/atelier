@@ -7,6 +7,7 @@ from .flux import FluxAdapter as FluxAdapter
 from .flux import FluxKontextAdapter as FluxKontextAdapter
 from .qwen_edit import QwenEditAdapter as QwenEditAdapter
 from .qwen_image import QwenImageAdapter as QwenImageAdapter
+from .qwen_image_2_1 import QwenImage21Adapter as QwenImage21Adapter
 from .sd import StableDiffusionAdapter as StableDiffusionAdapter
 from .sd3 import SD3Adapter as SD3Adapter
 from .sdxl import SDXLAdapter as SDXLAdapter

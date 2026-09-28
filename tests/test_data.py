@@ -278,9 +278,12 @@ class TestEditingDataset:
 
 class TestCacheUtils:
     def test_to_pil_from_pil(self):
-        img = Image.new("RGBA", (32, 32))
-        result = _to_pil(img)
-        assert result.mode == "RGB"
+        assert _to_pil(Image.new("L", (32, 32))).mode == "RGB"
+
+    def test_to_pil_keeps_alpha(self):
+        """RGBA survives caching for RGBA-VAE adapters (Qwen-Image 2.1); others convert to RGB themselves."""
+        assert _to_pil(Image.new("RGBA", (32, 32))).mode == "RGBA"
+        assert _to_pil(Image.new("LA", (32, 32))).mode == "RGBA"
 
     def test_to_pil_from_numpy(self):
         arr = np.random.randint(0, 255, (32, 32, 3), dtype=np.uint8)

@@ -73,7 +73,9 @@ def cache_embeddings(dataset, adapter, cache_dir=None, target_area=1024 * 1024, 
             prompt = item.get("prompt", "")
             encode_kwargs = {"device": device}
             if has_control:
-                encode_kwargs["images"] = [control_image]
+                # height/width let vision-conditioned encoders see the reference
+                # at the exact resolution it is VAE-encoded at (Qwen-Image 2.1)
+                encode_kwargs.update(images=[control_image], height=height, width=width)
             text_data = adapter.encode_text([prompt], **encode_kwargs)
             text_embeddings[key] = {k: v[0].cpu() if isinstance(v, torch.Tensor) else v for k, v in text_data.items()}
 
@@ -127,9 +129,12 @@ def _save_cache(cache_dir, text_embeddings, target_embeddings, control_embedding
 
 
 def _to_pil(image):
-    """Convert various image types to RGB PIL Image."""
-    if isinstance(image, Image.Image):
-        return image.convert("RGB")
-    if isinstance(image, str):
-        return Image.open(image).convert("RGB")
-    return Image.fromarray(np.uint8(image)).convert("RGB")
+    """Convert various image types to an RGB PIL Image — RGBA if the source has alpha.
+
+    Alpha is kept for adapters whose VAE takes RGBA (Qwen-Image 2.1); every
+    other adapter converts to RGB itself.
+    """
+    if not isinstance(image, Image.Image):
+        image = Image.open(image) if isinstance(image, str) else Image.fromarray(np.uint8(image))
+    has_alpha = image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info)
+    return image.convert("RGBA" if has_alpha else "RGB")

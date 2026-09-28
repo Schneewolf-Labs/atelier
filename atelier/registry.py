@@ -10,6 +10,7 @@ from typing import Any
 ADAPTERS: dict[str, str] = {
     "qwen_image":   "atelier.adapters.qwen_image:QwenImageAdapter",
     "qwen_edit":    "atelier.adapters.qwen_edit:QwenEditAdapter",
+    "qwen_image_2_1": "atelier.adapters.qwen_image_2_1:QwenImage21Adapter",
     "sd":           "atelier.adapters.sd:StableDiffusionAdapter",
     "sdxl":         "atelier.adapters.sdxl:SDXLAdapter",
     "sd3":          "atelier.adapters.sd3:SD3Adapter",

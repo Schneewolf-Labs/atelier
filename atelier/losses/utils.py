@@ -166,7 +166,7 @@ def _get_text_conditioning(adapter, batch, device):
     # Pre-computed embeddings
     if "prompt_embeds" in batch:
         result = {}
-        for key in ("prompt_embeds", "prompt_embeds_mask", "pooled_prompt_embeds", "time_ids"):
+        for key in ("prompt_embeds", "prompt_embeds_mask", "pooled_prompt_embeds", "time_ids", "prompt_token_types"):
             if key in batch and isinstance(batch[key], torch.Tensor):
                 result[key] = batch[key].to(device)
         return result

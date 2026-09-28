@@ -80,6 +80,10 @@ class EditingDataset(Dataset):
         return result
 
 
+# Per-token tensors aligned with prompt_embeds' sequence axis (zero-padded).
+SEQUENCE_KEYS = ("prompt_token_types",)
+
+
 class EditingCollator:
     """Collates editing samples into batches with padding for variable-length embeddings."""
 
@@ -119,8 +123,16 @@ class EditingCollator:
             if padded_masks:
                 batch["prompt_embeds_mask"] = torch.stack(padded_masks)
 
+            # Other per-token tensors (e.g. Qwen-Image 2.1 vision-slot types) pad like the mask
+            for key in SEQUENCE_KEYS:
+                values = [ex.get(key) for ex in examples]
+                if all(isinstance(v, torch.Tensor) for v in values):
+                    batch[key] = torch.stack([
+                        torch.cat([v, v.new_zeros(max_seq_len - v.shape[0])]) for v in values
+                    ])
+
         # Fixed-shape extras every sample carries (pooled_prompt_embeds, ...)
-        handled = {"target_latents", "control_latents", "prompt_embeds", "prompt_embeds_mask"}
+        handled = {"target_latents", "control_latents", "prompt_embeds", "prompt_embeds_mask", *SEQUENCE_KEYS}
         for key in examples[0]:
             if key in handled:
                 continue
